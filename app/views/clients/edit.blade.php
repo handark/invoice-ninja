@@ -8,8 +8,8 @@
 @section('content')
 <div class="row">
 	<!--<h3>{{ $title }} Client</h3>-->
-	
-	{{ Former::open($url)->addClass('col-md-12 main_form')->method($method)->rules(array(
+
+	{{ Former::open($url)->addClass('col-md-12 warn-on-exit')->method($method)->rules(array(
   		'email' => 'email|required'  		
 	)); }}
 
@@ -26,7 +26,15 @@
 			{{ Former::text('website') }}
 			{{ Former::text('work_phone') }}
 			
-			
+			@if (Auth::user()->isPro())				
+				@if ($customLabel1)
+					{{ Former::text('custom_value1')->label($customLabel1) }}
+				@endif
+				@if ($customLabel2)
+					{{ Former::text('custom_value2')->label($customLabel2) }}
+				@endif
+			@endif
+
 			{{ Former::legend('address') }}
 			{{ Former::text('address1') }}
 			{{ Former::text('address2') }}
@@ -150,7 +158,7 @@
 
 	<center class="buttons">
 		{{ Button::lg_primary_submit_success('Save')->append_with_icon('floppy-disk') }}
-        {{ Button::lg_default_link('clients/' . ($client ? $client->public_id : ''), 'Cancel')->append_with_icon('remove-circle'); }}
+    {{ Button::lg_default_link('clients/' . ($client ? $client->public_id : ''), 'Cancel')->append_with_icon('remove-circle'); }}
 	</center>
 
 	{{ Former::close() }}

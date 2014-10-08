@@ -1,21 +1,70 @@
 <?php
 
 use ninja\repositories\AccountRepository;
-use ninja\mailers\UserMailer as Mailer;
+use ninja\mailers\UserMailer;
+use ninja\mailers\ContactMailer;
 
 class AccountController extends \BaseController {
 
 	protected $accountRepo;
-	protected $mailer;
+	protected $userMailer;
+	protected $contactMailer;
 
-	public function __construct(AccountRepository $accountRepo, Mailer $mailer)
+	public function __construct(AccountRepository $accountRepo, UserMailer $userMailer, ContactMailer $contactMailer)
 	{
 		parent::__construct();
 
 		$this->accountRepo = $accountRepo;
-		$this->mailer = $mailer;
+		$this->userMailer = $userMailer;
+		$this->contactMailer = $contactMailer;
 	}	
 
+	public function install()
+	{
+		if (!Utils::isNinja() && !Schema::hasTable('accounts')) {
+			try {
+				Artisan::call('migrate');
+				Artisan::call('db:seed');		
+			} catch (Exception $e) {
+	      Response::make($e->getMessage(), 500);
+	    }
+		}
+
+		return Redirect::to('/');
+	}
+
+	public function update()
+	{		
+		if (!Utils::isNinja()) {
+			try {
+				Artisan::call('migrate');
+				Cache::flush();
+			} catch (Exception $e) {
+	      Response::make($e->getMessage(), 500);
+	    }
+	  }
+
+    return Redirect::to('/');
+	}
+
+	/*
+	public function reset()
+	{
+		if (Utils::isNinjaDev()) {			
+			Confide::logout();
+			try {
+				Artisan::call('migrate:reset');
+				Artisan::call('migrate');				
+				Artisan::call('db:seed');		
+			} catch (Exception $e) {
+	      Response::make($e->getMessage(), 500);
+	    }
+		}
+
+		return Redirect::to('/');
+	}
+	*/
+	
 	public function getStarted()
 	{	
 		if (Auth::check())
@@ -28,42 +77,43 @@ class AccountController extends \BaseController {
 
 		if ($guestKey) 
 		{
-			//$user = User::where('password', '=', $guestKey)->firstOrFail();
 			$user = User::where('password', '=', $guestKey)->first();
 
 			if ($user && $user->registered)
 			{
-				exit;
+				return Redirect::to('/');				
 			}
 		}
 
 		if (!$user)
 		{
-			$account = new Account;
-			$account->ip = Request::getClientIp();
-			$account->account_key = str_random(RANDOM_KEY_LENGTH);
-			$account->save();
-			
-			$random = str_random(RANDOM_KEY_LENGTH);
-
-			$user = new User;
-			$user->password = $random;
-			$user->password_confirmation = $random;			
-			$user->username = $random;
-			$account->users()->save($user);			
+			$account = $this->accountRepo->create();
+			$user = $account->users()->first();
 			
 			Session::forget(RECENTLY_VIEWED);
 		}
 
 		Auth::login($user, true);
 		Event::fire('user.login');		
-		
-		return Redirect::to('invoices/create');		
+
+		return Redirect::to('invoices/create');
+	}
+
+	public function enableProPlan()
+	{		
+		$invoice = $this->accountRepo->enableProPlan();
+
+		if ($invoice)
+		{
+			$this->contactMailer->sendInvoice($invoice);
+		}
+
+		return RESULT_SUCCESS;		
 	}
 
 	public function setTrashVisible($entityType, $visible)
 	{
-		Session::put('show_trash', $visible == 'true');
+		Session::put("show_trash:{$entityType}", $visible == 'true');
 		return Redirect::to("{$entityType}s");
 	}
 
@@ -74,7 +124,7 @@ class AccountController extends \BaseController {
 		return Response::json($data);
 	}
 
-	public function showSection($section = ACCOUNT_DETAILS)  
+	public function showSection($section = ACCOUNT_DETAILS, $subSection = false)  
 	{
 		if ($section == ACCOUNT_DETAILS)
 		{			
@@ -82,12 +132,13 @@ class AccountController extends \BaseController {
 				'account' => Account::with('users')->findOrFail(Auth::user()->account_id),
 				'countries' => Country::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get(),
 				'sizes' => Size::remember(DEFAULT_QUERY_CACHE)->orderBy('id')->get(),
-				'industries' => Industry::remember(DEFAULT_QUERY_CACHE)->orderBy('id')->get(),				
+				'industries' => Industry::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get(),				
 				'timezones' => Timezone::remember(DEFAULT_QUERY_CACHE)->orderBy('location')->get(),
 				'dateFormats' => DateFormat::remember(DEFAULT_QUERY_CACHE)->get(),
 				'datetimeFormats' => DatetimeFormat::remember(DEFAULT_QUERY_CACHE)->get(),
 				'currencies' => Currency::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get(),
 				'languages' => Language::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get(),
+				'showUser' => Auth::user()->id === Auth::user()->account->users()->first()->id,
 			];
 
 			return View::make('accounts.details', $data);
@@ -97,30 +148,88 @@ class AccountController extends \BaseController {
 			$account = Account::with('account_gateways')->findOrFail(Auth::user()->account_id);
 			$accountGateway = null;
 			$config = null;
+			$configFields = null;
+      $selectedCards = 0;
 
 			if (count($account->account_gateways) > 0)
 			{
 				$accountGateway = $account->account_gateways[0];
 				$config = $accountGateway->config;
-			}			
-
-			$data = [
-				'account' => $account,
-				'accountGateway' => $accountGateway,
-				'config' => json_decode($config),
-				'gateways' => Gateway::remember(DEFAULT_QUERY_CACHE)->get(),
-			];
+				$selectedCards = $accountGateway->accepted_credit_cards;
+                
+				$configFields = json_decode($config);
+                
+				foreach($configFields as $configField => $value)
+				{
+					$configFields->$configField = str_repeat('*', strlen($value));
+				}
+			} else {
+				$accountGateway = AccountGateway::createNew();
+				$accountGateway->gateway_id = GATEWAY_MOOLAH;				
+			}
 			
-			foreach ($data['gateways'] as $gateway)
+			$recommendedGateways = Gateway::remember(DEFAULT_QUERY_CACHE)
+					->where('recommended', '=', '1')
+					->orderBy('sort_order')
+					->get();
+			$recommendedGatewayArray = array();
+			
+			foreach($recommendedGateways as $recommendedGateway)
 			{
-				$gateway->fields = Omnipay::create($gateway->provider)->getDefaultParameters();				
+				$arrayItem = array(
+					'value' => $recommendedGateway->id,
+					'other' => 'false',
+					'data-imageUrl' => asset($recommendedGateway->getLogoUrl()),
+					'data-siteUrl' => $recommendedGateway->site_url
+				);
+				$recommendedGatewayArray[$recommendedGateway->name] = $arrayItem;
+			}      
 
+      $creditCardsArray = unserialize(CREDIT_CARDS);
+      $creditCards = [];
+			foreach($creditCardsArray as $card => $name)
+			{
+        if($selectedCards > 0 && ($selectedCards & $card) == $card)
+            $creditCards[$name['text']] = ['value' => $card, 'data-imageUrl' => asset($name['card']), 'checked' => 'checked'];
+        else
+            $creditCards[$name['text']] = ['value' => $card, 'data-imageUrl' => asset($name['card'])];
+			}
+
+			$otherItem = array(
+				'value' => 1000000,
+				'other' => 'true',
+				'data-imageUrl' => '',
+				'data-siteUrl' => ''
+			);
+			$recommendedGatewayArray['Other Options'] = $otherItem;
+
+			$gateways = Gateway::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get();
+
+			foreach ($gateways as $gateway)
+			{
+				$paymentLibrary = $gateway->paymentlibrary;
+
+				$gateway->fields = $gateway->getFields();	
+	
 				if ($accountGateway && $accountGateway->gateway_id == $gateway->id)
 				{
 					$accountGateway->fields = $gateway->fields;						
 				}
 			}	
-
+      
+      $data = [
+				'account' => $account,
+				'accountGateway' => $accountGateway,
+				'config' => $configFields,
+				'gateways' => $gateways,
+				'dropdownGateways' => Gateway::remember(DEFAULT_QUERY_CACHE)
+					->where('recommended', '=', '0')
+					->orderBy('name')
+					->get(),
+				'recommendedGateways' => $recommendedGatewayArray,
+        'creditCardTypes' => $creditCards, 
+			];
+			
 			return View::make('accounts.payments', $data);
 		}
 		else if ($section == ACCOUNT_NOTIFICATIONS)
@@ -135,9 +244,26 @@ class AccountController extends \BaseController {
 		{
 			return View::make('accounts.import_export');	
 		}	
+		else if ($section == ACCOUNT_ADVANCED_SETTINGS)
+		{
+			$data = [
+				'account' => Auth::user()->account,
+				'feature' => $subSection
+			];
+
+			return View::make("accounts.{$subSection}", $data);	
+		}
+		else if ($section == ACCOUNT_PRODUCTS)
+		{
+			$data = [
+				'account' => Auth::user()->account
+			];
+
+			return View::make('accounts.products', $data);		
+		}
 	}
 
-	public function doSection($section = ACCOUNT_DETAILS)
+	public function doSection($section = ACCOUNT_DETAILS, $subSection = false)
 	{
 		if ($section == ACCOUNT_DETAILS)
 		{
@@ -163,34 +289,97 @@ class AccountController extends \BaseController {
 		{
 			return AccountController::export();
 		}		
+		else if ($section == ACCOUNT_ADVANCED_SETTINGS)
+		{
+			if ($subSection == ACCOUNT_CUSTOM_FIELDS) 
+			{
+				return AccountController::saveCustomFields();
+			} 
+			else if ($subSection == ACCOUNT_INVOICE_DESIGN)
+			{
+				return AccountController::saveInvoiceDesign();
+			}
+		}
+		else if ($section == ACCOUNT_PRODUCTS)
+		{
+			return AccountController::saveProducts();
+		}
+	}
+
+	private function saveProducts()
+	{
+		$account = Auth::user()->account;
+
+		$account->fill_products = Input::get('fill_products') ? true : false;
+		$account->update_products = Input::get('update_products') ? true : false;
+		$account->save();
+
+		Session::flash('message', trans('texts.updated_settings'));
+		return Redirect::to('company/products');		
+	}
+
+	private function saveCustomFields()
+	{
+		if (Auth::user()->account->isPro())
+		{
+			$account = Auth::user()->account;
+			$account->custom_label1 = trim(Input::get('custom_label1'));
+			$account->custom_value1 = trim(Input::get('custom_value1'));
+			$account->custom_label2 = trim(Input::get('custom_label2'));
+			$account->custom_value2 = trim(Input::get('custom_value2'));
+			$account->custom_client_label1 = trim(Input::get('custom_client_label1'));
+			$account->custom_client_label2 = trim(Input::get('custom_client_label2'));		
+			$account->custom_invoice_label1 = trim(Input::get('custom_invoice_label1'));
+			$account->custom_invoice_label2 = trim(Input::get('custom_invoice_label2'));
+			$account->custom_invoice_taxes1 = Input::get('custom_invoice_taxes1') ? true : false;
+			$account->custom_invoice_taxes2 = Input::get('custom_invoice_taxes2') ? true : false;			
+			$account->save();
+
+			Session::flash('message', trans('texts.updated_settings'));
+		}
+
+		return Redirect::to('company/advanced_settings/custom_fields');		
+	}
+
+	private function saveInvoiceDesign()
+	{
+		if (Auth::user()->account->isPro())
+		{
+			$account = Auth::user()->account;
+			$account->hide_quantity = Input::get('hide_quantity') ? true : false;
+			$account->hide_paid_to_date = Input::get('hide_paid_to_date') ? true : false;
+			$account->primary_color = Input::get('primary_color');// ? Input::get('primary_color') : null;
+			$account->secondary_color = Input::get('secondary_color');// ? Input::get('secondary_color') : null;
+			$account->save();
+
+			Session::flash('message', trans('texts.updated_settings'));
+		}
+		
+		return Redirect::to('company/advanced_settings/invoice_design');		
 	}
 
 	private function export()
 	{
-		$output = fopen("php://output",'w') or die("Can't open php://output");
-		header("Content-Type:application/csv"); 
-		header("Content-Disposition:attachment;filename=export.csv"); 
+		$output = fopen('php://output','w') or Utils::fatalError();
+		header('Content-Type:application/csv'); 
+		header('Content-Disposition:attachment;filename=export.csv');
 		
-		$clients = Client::where('account_id','=',Auth::user()->account_id)->get();
+		$clients = Client::scope()->get();
 		AccountController::exportData($output, $clients->toArray());
 
-		$contacts = DB::table('contacts')->whereIn('client_id', function($query){
-            $query->select('client_id')->from('clients')->where('account_id','=',Auth::user()->account_id);
-	    })->get();
-		AccountController::exportData($output, Utils::toArray($contacts));
-		
-		$invoices = Invoice::where('account_id','=',Auth::user()->account_id)->get();
-		AccountController::exportData($output, $invoices->toArray());		
+		$contacts = Contact::scope()->get();
+		AccountController::exportData($output, $contacts->toArray());
 
-		$invoiceItems = DB::table('invoice_items')->whereIn('invoice_id', function($query){
-            $query->select('invoice_id')->from('invoices')->where('account_id','=',Auth::user()->account_id);
-	    })->get();
-		AccountController::exportData($output, Utils::toArray($invoiceItems));
+		$invoices = Invoice::scope()->get();
+		AccountController::exportData($output, $invoices->toArray());
 
-		$payments = Payment::where('account_id','=',Auth::user()->account_id)->get();
+		$invoiceItems = InvoiceItem::scope()->get();
+		AccountController::exportData($output, $invoiceItems->toArray());
+
+		$payments = Payment::scope()->get();
 		AccountController::exportData($output, $payments->toArray());
 
-		$credits = Credit::where('account_id','=',Auth::user()->account_id)->get();
+		$credits = Credit::scope()->get();
 		AccountController::exportData($output, $credits->toArray());
 
 		fclose($output);
@@ -240,6 +429,7 @@ class AccountController extends \BaseController {
 			$client = Client::createNew();		
 			$contact = Contact::createNew();
 			$contact->is_primary = true;
+			$contact->send_invoice = true;
 			$count++;
 
 			foreach ($row as $index => $value)
@@ -304,17 +494,24 @@ class AccountController extends \BaseController {
 
 			$client->save();
 			$client->contacts()->save($contact);		
-			Activity::createClient($client);
+			Activity::createClient($client, false);
 		}
 
-		$message = Utils::pluralize('Successfully created ? client', $count);
+		$message = Utils::pluralize('created_client', $count);
 		Session::flash('message', $message);
 		return Redirect::to('clients');
 	}
 
 	private function mapFile()
-	{
+	{		
 		$file = Input::file('file');
+
+		if ($file == null)
+		{
+			Session::flash('error', trans('texts.select_file'));
+			return Redirect::to('company/import_export');			
+		}
+
 		$name = $file->getRealPath();
 
 		require_once(app_path().'/includes/parsecsv.lib.php');
@@ -322,9 +519,10 @@ class AccountController extends \BaseController {
 		$csv->heading = false;
 		$csv->auto($name);
 		
-		if (count($csv->data) + Client::scope()->count() > MAX_NUM_CLIENTS)
+		if (count($csv->data) + Client::scope()->count() > Auth::user()->getMaxNumClients())
 		{
-			Session::flash('error', "Sorry, this wll exceed the limit of " . MAX_NUM_CLIENTS . " clients");
+      $message = trans('texts.limit_clients', ['count' => Auth::user()->getMaxNumClients()]);
+			Session::flash('error', $message);
 			return Redirect::to('company/import_export');
 		}
 
@@ -417,7 +615,7 @@ class AccountController extends \BaseController {
 
 	private function saveNotifications()
 	{
-		$account = Account::findOrFail(Auth::user()->account_id);			
+		$account = Auth::user()->account;
 		$account->invoice_terms = Input::get('invoice_terms');
 		$account->email_footer = Input::get('email_footer');
 		$account->save();
@@ -428,28 +626,43 @@ class AccountController extends \BaseController {
 		$user->notify_paid = Input::get('notify_paid');
 		$user->save();
 		
-		Session::flash('message', 'Successfully updated settings');
+		Session::flash('message', trans('texts.updated_settings'));
 		return Redirect::to('company/notifications');
 	}
 
 	private function savePayments()
-	{
+	{  
 		$rules = array();
+		$recommendedId = Input::get('recommendedGateway_id');
 
-		if ($gatewayId = Input::get('gateway_id')) 
+		if ($gatewayId = $recommendedId == 1000000 ? Input::get('gateway_id') : $recommendedId) 
 		{
 			$gateway = Gateway::findOrFail($gatewayId);
-			$fields = Omnipay::create($gateway->provider)->getDefaultParameters();
+			
+			$paymentLibrary = $gateway->paymentlibrary;
+			
+			$fields = $gateway->getFields();
 			
 			foreach ($fields as $field => $details)
 			{
 				if (!in_array($field, ['testMode', 'developerMode', 'headerImageUrl', 'solutionType', 'landingPage', 'brandName']))
 				{
-					$rules[$gateway->id.'_'.$field] = 'required';
+					if(strtolower($gateway->name) == 'beanstream')
+					{
+						if(in_array($field, ['merchant_id', 'passCode']))
+						{
+							$rules[$gateway->id.'_'.$field] = 'required';
+						}
+					} 
+					else 
+					{
+						$rules[$gateway->id.'_'.$field] = 'required';
+					}
 				}				
 			}			
 		}
-		
+        
+    $creditcards = Input::get('creditCardTypes');
 		$validator = Validator::make(Input::all(), $rules);
 
 		if ($validator->fails()) 
@@ -460,25 +673,58 @@ class AccountController extends \BaseController {
 		} 
 		else 
 		{
-			$account = Account::findOrFail(Auth::user()->account_id);						
-			$account->account_gateways()->delete();
+			$account = Account::with('account_gateways')->findOrFail(Auth::user()->account_id);						
 
 			if ($gatewayId) 
 			{
 				$accountGateway = AccountGateway::createNew();
 				$accountGateway->gateway_id = $gatewayId;
+				$isMasked = false;
 
 				$config = new stdClass;
 				foreach ($fields as $field => $details)
 				{
-					$config->$field = trim(Input::get($gateway->id.'_'.$field));
-				}			
-				
-				$accountGateway->config = json_encode($config);
-				$account->account_gateways()->save($accountGateway);
-			}
+					$value = trim(Input::get($gateway->id.'_'.$field));
 
-			Session::flash('message', 'Successfully updated settings');
+					if ($value && $value === str_repeat('*', strlen($value)))
+					{
+						$isMasked = true;
+					}
+
+					$config->$field = $value;
+				}
+                
+        $cardCount = 0;
+        if ($creditcards) 
+        {
+	        foreach($creditcards as $card => $value)
+	        {
+            $cardCount += intval($value);
+	        }			
+        }
+				
+				if ($isMasked && count($account->account_gateways)) 
+				{
+					$currentGateway = $account->account_gateways[0];
+					$currentGateway->accepted_credit_cards = $cardCount;
+					$currentGateway->save();
+				} 
+				else 
+				{
+					$accountGateway->config = json_encode($config);
+					$accountGateway->accepted_credit_cards = $cardCount;
+	
+					$account->account_gateways()->delete();
+					$account->account_gateways()->save($accountGateway);
+				}
+
+				Session::flash('message', trans('texts.updated_settings'));
+			}
+			else
+			{
+				Session::flash('error', trans('validation.required', ['attribute' => 'gateway']));
+			}
+			
 			return Redirect::to('company/payments');
 		}				
 	}
@@ -487,8 +733,14 @@ class AccountController extends \BaseController {
 	{
 		$rules = array(
 			'name' => 'required',
-			'email' => 'email|required|unique:users,email,' . Auth::user()->id . ',id'
 		);
+
+		$user = Auth::user()->account->users()->first();
+
+		if (Auth::user()->id === $user->id)		
+		{
+			$rules['email'] = 'email|required|unique:users,email,' . $user->id . ',id';
+		}
 
 		$validator = Validator::make(Input::all(), $rules);
 
@@ -519,25 +771,29 @@ class AccountController extends \BaseController {
 			$account->language_id = Input::get('language_id') ? Input::get('language_id') : 1; // English
 			$account->save();
 
-			$user = Auth::user();
-			$user->first_name = trim(Input::get('first_name'));
-			$user->last_name = trim(Input::get('last_name'));
-			$user->username = trim(Input::get('email'));
-			$user->email = trim(strtolower(Input::get('email')));
-			$user->phone = trim(Input::get('phone'));				
-			$user->save();
+			if (Auth::user()->id === $user->id)
+			{
+				$user->first_name = trim(Input::get('first_name'));
+				$user->last_name = trim(Input::get('last_name'));
+				$user->username = trim(Input::get('email'));
+				$user->email = trim(strtolower(Input::get('email')));
+				$user->phone = trim(Input::get('phone'));				
+				$user->save();
+			}
 
 			/* Logo image file */
 			if ($file = Input::file('logo'))
 			{
 				$path = Input::file('logo')->getRealPath();
 				File::delete('logo/' . $account->account_key . '.jpg');				
-				Image::make($path)->resize(null, 120, true, false)->save('logo/' . $account->account_key . '.jpg');				
+								
+				$image = Image::make($path)->resize(200, 120, true, false);
+				Image::canvas($image->width, $image->height, '#FFFFFF')->insert($image)->save($account->getLogoPath());
 			}
 
 			Event::fire('user.refresh');
 
-			Session::flash('message', 'Successfully updated details');
+			Session::flash('message', trans('texts.updated_settings'));
 			return Redirect::to('company/details');
 		}
 	}
@@ -546,7 +802,7 @@ class AccountController extends \BaseController {
 
 		File::delete('logo/' . Auth::user()->account->account_key . '.jpg');
 
-		Session::flash('message', 'Successfully removed logo');
+		Session::flash('message', trans('texts.removed_logo'));
 		return Redirect::to('company/details');		
 	}
 
@@ -590,7 +846,7 @@ class AccountController extends \BaseController {
 		$user->registered = true;
 		$user->amend();
 
-		$this->mailer->sendConfirmation($user);
+		$this->userMailer->sendConfirmation($user);
 
 		$activities = Activity::scope()->get();
 		foreach ($activities as $activity) 
@@ -599,6 +855,23 @@ class AccountController extends \BaseController {
 			$activity->save();
 		}
 
+		if (Input::get('go_pro') == 'true')
+		{
+			Session::set(REQUESTED_PRO_PLAN, true);
+		}
+
+		Session::set(SESSION_COUNTER, -1);
+
 		return "{$user->first_name} {$user->last_name}";
+	}
+
+	public function cancelAccount()
+	{
+		$account = Auth::user()->account;
+		$account->forceDelete();
+
+		Confide::logout();
+
+		return Redirect::to('/')->with('clearGuestKey', true);
 	}
 }

@@ -6,7 +6,543 @@ var isChrome = !!window.chrome && !isOpera;              // Chrome 1+
 var isChromium = isChrome && navigator.userAgent.indexOf('Chromium') >= 0;
 var isIE = /*@cc_on!@*/false || !!document.documentMode; // At least IE6
 
-function GetReportTemplate4(doc, invoice, layout, checkMath) {
+
+var invoiceOld;
+function generatePDF(invoice, force) {
+  invoice = calculateAmounts(invoice);  
+  var a = copyInvoice(invoice);
+  var b = copyInvoice(invoiceOld);
+  if (!force && _.isEqual(a, b)) {
+    return;
+  }
+  invoiceOld = invoice;
+  report_id = invoice.invoice_design_id;
+  doc = GetPdf(invoice, report_id);
+  return doc;
+}
+
+function copyInvoice(orig) {
+  if (!orig) return false;
+  var copy = JSON.stringify(orig);
+  var copy = JSON.parse(copy);
+  return copy;
+}
+
+
+
+function GetPdf(invoice, report_id){
+  var layout = {
+    accountTop: 40,
+    marginLeft: 50,
+    marginRight: 550,
+    headerTop: 150,
+    headerLeft: 360,
+    headerRight: 550,
+    rowHeight: 15,
+    tableRowHeight: 10,
+    footerLeft: 420,
+    tablePadding: 12,
+    tableTop: 250,
+    descriptionLeft: 162,
+    unitCostRight: 410,
+    qtyRight: 480,
+    taxRight: 480,
+    lineTotalRight: 550
+  };
+
+  if (invoice.has_taxes)
+  {
+    layout.descriptionLeft -= 20;
+    layout.unitCostRight -= 40;
+    layout.qtyRight -= 40;
+  } 
+
+  /*
+   @param orientation One of "portrait" or "landscape" (or shortcuts "p" (Default), "l")
+   @param unit Measurement unit to be used when coordinates are specified. One of "pt" (points), "mm" (Default), "cm", "in"
+   @param format One of 'a3', 'a4' (Default),'a5' ,'letter' ,'legal'
+   @returns {jsPDF}
+   */
+  var doc = new jsPDF('portrait', 'pt', 'a4');
+
+
+  //Set PDF properities
+  doc.setProperties({
+      title: 'Invoice ' + invoice.invoice_number,
+      subject: '',
+      author: 'InvoiceNinja.com',
+      keywords: 'pdf, invoice',
+      creator: 'InvoiceNinja.com'
+  });
+
+  //set default style for report
+  doc.setFont('Helvetica','');
+
+  if (report_id==1) {
+    return GetReportTemplate1(doc, invoice, layout);
+  } else if (report_id==2) {
+    return GetReportTemplate2(doc, invoice, layout);
+  } else if (report_id==3) {
+    return GetReportTemplate3(doc, invoice, layout);
+  } else {
+    return GetReportTemplate4(doc, invoice, layout);
+  }
+}
+
+function GetReportTemplate1(doc, invoice, layout)
+{
+    var GlobalY=0;//Y position of line at current page
+
+    var client = invoice.client;
+    var account = invoice.account;
+    var currencyId = client.currency_id;
+
+    layout.headerRight = 550;
+    layout.rowHeight = 15;
+
+    doc.setFontSize(9);
+
+    if (invoice.image)
+    {
+      var left = layout.headerRight - invoice.imageWidth;
+      doc.addImage(invoice.image, 'JPEG', layout.marginLeft, 30);
+    }
+  
+    if (!invoice.is_pro && logoImages.imageLogo1)
+    {
+      pageHeight=820;
+      y=pageHeight-logoImages.imageLogoHeight1;
+      doc.addImage(logoImages.imageLogo1, 'JPEG', layout.marginLeft, y, logoImages.imageLogoWidth1, logoImages.imageLogoHeight1);
+    }
+
+    doc.setFontSize(9);
+    SetPdfColor('LightBlue', doc, 'primary');
+    displayAccount(doc, invoice, 220, layout.accountTop, layout);
+
+    SetPdfColor('LightBlue', doc, 'primary');
+    doc.setFontSize('11');
+    doc.text(50, layout.headerTop, (invoice.is_quote ? invoiceLabels.quote : invoiceLabels.invoice).toUpperCase());
+
+
+    SetPdfColor('Black',doc); //set black color
+    doc.setFontSize(9);
+
+    var invoiceHeight = displayInvoice(doc, invoice, 50, 170, layout);
+    var clientHeight = displayClient(doc, invoice, 220, 170, layout);
+    var detailsHeight = Math.max(invoiceHeight, clientHeight);
+    layout.tableTop = Math.max(layout.tableTop, layout.headerTop + detailsHeight + (3 * layout.rowHeight));
+
+    
+
+    doc.setLineWidth(0.3);        
+    doc.setDrawColor(200,200,200);
+    doc.line(layout.marginLeft - layout.tablePadding, layout.headerTop + 6, layout.marginRight + layout.tablePadding, layout.headerTop + 6);
+    doc.line(layout.marginLeft - layout.tablePadding, layout.headerTop + detailsHeight + 14, layout.marginRight + layout.tablePadding, layout.headerTop + detailsHeight + 14);
+ 
+
+    doc.setFontSize(10);
+    doc.setFontType("bold");
+    displayInvoiceHeader(doc, invoice, layout);
+    var y = displayInvoiceItems(doc, invoice, layout);
+
+    doc.setFontSize(9);
+    doc.setFontType("bold");
+
+    GlobalY=GlobalY+25;
+
+
+    doc.setLineWidth(0.3);
+    doc.setDrawColor(241,241,241);
+    doc.setFillColor(241,241,241);
+    var x1 = layout.marginLeft - 12;
+    var y1 = GlobalY-layout.tablePadding;
+
+    var w2 = 510 + 24;
+    var h2 = doc.internal.getFontSize()*3+layout.tablePadding*2;
+
+    if (invoice.discount) {
+        h2 += doc.internal.getFontSize()*2;
+    }
+    if (invoice.tax_amount) {
+        h2 += doc.internal.getFontSize()*2;
+    }
+
+    //doc.rect(x1, y1, w2, h2, 'FD');
+
+    doc.setFontSize(9);
+    displayNotesAndTerms(doc, layout, invoice, y);
+    y += displaySubtotals(doc, layout, invoice, y, layout.unitCostRight);
+
+
+    doc.setFontSize(10);
+    Msg = invoice.is_quote ? invoiceLabels.total : invoiceLabels.balance_due;
+    var TmpMsgX = layout.unitCostRight-(doc.getStringUnitWidth(Msg) * doc.internal.getFontSize());
+    
+    doc.text(TmpMsgX, y, Msg);
+
+    SetPdfColor('LightBlue', doc, 'primary');
+    AmountText = formatMoney(invoice.balance_amount, currencyId);
+    headerLeft=layout.headerRight+400;
+    var AmountX = layout.lineTotalRight - (doc.getStringUnitWidth(AmountText) * doc.internal.getFontSize());
+    doc.text(AmountX, y, AmountText);
+
+    return doc;
+}
+
+
+
+
+function GetReportTemplate2(doc, invoice, layout)
+{
+  var GlobalY=0;//Y position of line at current page
+
+  var client = invoice.client;
+  var account = invoice.account;
+  var currencyId = client.currency_id;
+
+  layout.headerRight = 150;
+  layout.rowHeight = 15;
+  layout.headerTop = 125;
+  layout.tableTop = 300;
+
+  doc.setLineWidth(0.5);
+
+  if (NINJA.primaryColor) {
+    setDocHexFill(doc, NINJA.primaryColor);
+    setDocHexDraw(doc, NINJA.primaryColor);
+  } else {
+    doc.setFillColor(46,43,43);
+  }  
+
+  var x1 =0;
+  var y1 = 0;
+  var w2 = 595;
+  var h2 = 100;
+  doc.rect(x1, y1, w2, h2, 'FD');
+
+
+  if (invoice.image)
+  {
+      var left = layout.headerRight - invoice.imageWidth;
+      doc.addImage(invoice.image, 'JPEG', layout.marginLeft, 30);
+  }
+
+  Report2AddFooter(invoice,doc);
+
+  doc.setFontSize(7);
+  doc.setFontType("bold");
+  SetPdfColor('White',doc);
+
+  displayAccount(doc, invoice, 300, layout.accountTop, layout);
+
+
+  var y = layout.accountTop;
+  var left = layout.marginLeft;
+  var headerY = layout.headerTop;
+
+  SetPdfColor('GrayLogo',doc); //set black color
+  doc.setFontSize(7);
+
+  //show left column
+  SetPdfColor('Black',doc); //set black color
+  doc.setFontType("normal");
+
+  //publish filled box
+  doc.setDrawColor(200,200,200);
+
+  if (NINJA.secondaryColor) {
+    setDocHexFill(doc, NINJA.secondaryColor);
+  } else {
+    doc.setFillColor(54,164,152);  
+  }  
+
+  GlobalY=190;
+  doc.setLineWidth(0.5);
+
+  var BlockLenght=220;
+  var x1 =595-BlockLenght;
+  var y1 = GlobalY-12;
+  var w2 = BlockLenght;
+  var h2 = getInvoiceDetailsHeight(invoice, layout) + layout.tablePadding + 2;
+
+  doc.rect(x1, y1, w2, h2, 'FD');
+
+  SetPdfColor('SomeGreen', doc, 'secondary');
+  doc.setFontSize('14');
+  doc.setFontType("bold");
+  doc.text(50, GlobalY, (invoice.is_quote ? invoiceLabels.your_quote : invoiceLabels.your_invoice).toUpperCase());
+
+
+  var z=GlobalY;
+  z=z+30;
+
+  doc.setFontSize('8');        
+  SetPdfColor('Black',doc);
+  displayClient(doc, invoice, layout.marginLeft, z, layout);
+
+  marginLeft2=395;
+
+  //publish left side information
+  SetPdfColor('White',doc);
+  doc.setFontSize('8');
+  var detailsHeight = displayInvoice(doc, invoice, marginLeft2, z-25, layout) + 75;
+  layout.tableTop = Math.max(layout.tableTop, layout.headerTop + detailsHeight + (2 * layout.tablePadding));
+
+  y=z+60;
+  x = GlobalY + 100;
+  doc.setFontType("bold");
+
+  doc.setFontSize(12);
+  doc.setFontType("bold");
+  SetPdfColor('Black',doc);
+  displayInvoiceHeader(doc, invoice, layout);
+
+  var y = displayInvoiceItems(doc, invoice, layout);
+  doc.setLineWidth(0.3);
+  displayNotesAndTerms(doc, layout, invoice, y);
+  y += displaySubtotals(doc, layout, invoice, y, layout.unitCostRight);
+
+  doc.setFontType("bold");
+
+  doc.setFontSize(12);
+  x += doc.internal.getFontSize()*4;
+  Msg = invoice.is_quote ? invoiceLabels.total : invoiceLabels.balance_due;
+  var TmpMsgX = layout.unitCostRight-(doc.getStringUnitWidth(Msg) * doc.internal.getFontSize());
+
+  doc.text(TmpMsgX, y, Msg);
+
+  //SetPdfColor('LightBlue',doc);
+  AmountText = formatMoney(invoice.balance_amount , currencyId);
+  headerLeft=layout.headerRight+400;
+  var AmountX = headerLeft - (doc.getStringUnitWidth(AmountText) * doc.internal.getFontSize());
+  SetPdfColor('SomeGreen', doc, 'secondary');
+  doc.text(AmountX, y, AmountText);
+
+  return doc;
+}
+
+
+function Report2AddFooter (invoice,doc)
+{
+  doc.setLineWidth(0.5);
+  if (NINJA.primaryColor) {
+    setDocHexFill(doc, NINJA.primaryColor);
+    setDocHexDraw(doc, NINJA.primaryColor);
+  } else {
+    doc.setFillColor(46,43,43);
+    doc.setDrawColor(46,43,43);
+  }  
+
+  // return doc.setTextColor(240,240,240);//select color Custom Report GRAY Colour
+  var x1 = 0;//tableLeft-tablePadding ;
+  var y1 = 750;
+  var w2 = 596;
+  var h2 = 94;//doc.internal.getFontSize()*length+length*1.1;//+h;//+tablePadding;
+
+
+  doc.rect(x1, y1, w2, h2, 'FD');
+
+  if (!invoice.is_pro && logoImages.imageLogo2)
+  {
+      pageHeight=820;
+      var left = 250;//headerRight ;
+      y=pageHeight-logoImages.imageLogoHeight2;
+      var headerRight=370;
+
+      var left = headerRight - logoImages.imageLogoWidth2;
+      doc.addImage(logoImages.imageLogo2, 'JPEG', left, y, logoImages.imageLogoWidth2, logoImages.imageLogoHeight2);
+  }
+}
+
+function Report3AddFooter (invoice, account, doc, layout)
+{
+
+  doc.setLineWidth(0.5);
+
+  if (NINJA.primaryColor) {
+    setDocHexFill(doc, NINJA.primaryColor);
+    setDocHexDraw(doc, NINJA.primaryColor);
+  } else {
+    doc.setDrawColor(242,101,34);
+    doc.setFillColor(242,101,34);
+  }  
+
+  var x1 = 0;//tableLeft-tablePadding ;
+  var y1 = 750;
+  var w2 = 596;
+  var h2 = 94;//doc.internal.getFontSize()*length+length*1.1;//+h;//+tablePadding;
+
+  doc.rect(x1, y1, w2, h2, 'FD');
+
+  if (!invoice.is_pro && logoImages.imageLogo3)
+  {
+      pageHeight=820;
+    // var left = 25;//250;//headerRight ;
+      y=pageHeight-logoImages.imageLogoHeight3;
+      //var headerRight=370;
+
+      //var left = headerRight - invoice.imageLogoWidth3;
+      doc.addImage(logoImages.imageLogo3, 'JPEG', 40, y, logoImages.imageLogoWidth3, logoImages.imageLogoHeight3);
+  }
+
+  doc.setFontSize(10);  
+  var marginLeft = 340;
+  displayAccount(doc, invoice, marginLeft, 780, layout);
+}
+
+
+
+function GetReportTemplate3(doc, invoice, layout)
+{
+    var client = invoice.client;
+    var account = invoice.account;
+    var currencyId = client.currency_id;
+
+    layout.headerRight = 400;
+    layout.rowHeight = 15;
+
+
+    doc.setFontSize(7);
+
+    Report3AddHeader(invoice, layout, doc);
+
+    if (invoice.image)
+    {
+        y=130;
+        var left = layout.headerRight - invoice.imageWidth;
+        doc.addImage(invoice.image, 'JPEG', layout.marginLeft, y);
+    }
+
+    Report3AddFooter (invoice, account, doc, layout);
+
+
+    SetPdfColor('White',doc);    
+    doc.setFontSize('8');
+    var detailsHeight = displayInvoice(doc, invoice, layout.headerRight, layout.accountTop-10, layout);
+    layout.headerTop = Math.max(layout.headerTop, detailsHeight + 50);
+    layout.tableTop = Math.max(layout.tableTop, detailsHeight + 150);
+
+    SetPdfColor('Black',doc); //set black color
+    doc.setFontSize(7);
+    doc.setFontType("normal");
+    displayClient(doc, invoice, layout.headerRight, layout.headerTop, layout);
+
+
+      
+    SetPdfColor('White',doc);    
+    doc.setFontType('bold');
+
+    doc.setLineWidth(0.3);
+    if (NINJA.secondaryColor) {
+      setDocHexFill(doc, NINJA.secondaryColor);
+      setDocHexDraw(doc, NINJA.secondaryColor);
+    } else {
+      doc.setDrawColor(63,60,60);
+      doc.setFillColor(63,60,60);
+    }  
+
+    var left = layout.marginLeft - layout.tablePadding;
+    var top = layout.tableTop - layout.tablePadding;
+    var width = layout.marginRight - (2 * layout.tablePadding);
+    var height = 20;
+    doc.rect(left, top, width, height, 'FD');
+    
+
+    displayInvoiceHeader(doc, invoice, layout);
+    SetPdfColor('Black',doc);
+    var y = displayInvoiceItems(doc, invoice, layout);
+
+
+    var height1 = displayNotesAndTerms(doc, layout, invoice, y);
+    var height2 = displaySubtotals(doc, layout, invoice, y, layout.unitCostRight);
+    y += Math.max(height1, height2);
+
+
+    var left = layout.marginLeft - layout.tablePadding;
+    var top = y - layout.tablePadding;
+    var width = layout.marginRight - (2 * layout.tablePadding);
+    var height = 20;
+    if (NINJA.secondaryColor) {
+      setDocHexFill(doc, NINJA.secondaryColor);
+      setDocHexDraw(doc, NINJA.secondaryColor);
+    } else {
+      doc.setDrawColor(63,60,60);
+      doc.setFillColor(63,60,60);
+    }  
+    doc.rect(left, top, width, height, 'FD');
+    
+    doc.setFontType('bold');
+    SetPdfColor('White', doc);
+    doc.setFontSize(12);
+    
+    var label = invoice.is_quote ? invoiceLabels.total : invoiceLabels.balance_due;
+    var labelX = layout.unitCostRight-(doc.getStringUnitWidth(label) * doc.internal.getFontSize());
+    doc.text(labelX, y+2, label);
+
+
+    doc.setFontType('normal');
+    var amount = formatMoney(invoice.balance_amount , currencyId);
+    headerLeft=layout.headerRight+400;
+    var amountX = layout.lineTotalRight - (doc.getStringUnitWidth(amount) * doc.internal.getFontSize());
+    doc.text(amountX, y+2, amount);
+
+    return doc;
+}
+
+
+
+
+function Report3AddHeader (invoice, layout, doc)
+{
+    doc.setLineWidth(0.5);
+
+    if (NINJA.primaryColor) {
+      setDocHexFill(doc, NINJA.primaryColor);
+      setDocHexDraw(doc, NINJA.primaryColor);
+    } else {
+      doc.setDrawColor(242,101,34);
+      doc.setFillColor(242,101,34);
+    }  
+
+    var x1 =0;
+    var y1 = 0;
+    var w2 = 595;
+    var h2 = Math.max(110, getInvoiceDetailsHeight(invoice, layout) + 30);
+    doc.rect(x1, y1, w2, h2, 'FD');
+
+    SetPdfColor('White',doc);
+
+    //second column
+    doc.setFontType('bold');
+    var name = invoice.account.name;    
+    if (name) {
+        doc.setFontSize('30');
+        doc.setFontType('bold');
+        doc.text(40, 50, name);
+    }
+}
+
+
+function Report1AddNewPage(invoice,account,doc)
+{
+    doc.addPage();
+    if (logoImages.imageLogo1)
+    {
+        pageHeight=820;
+        y=pageHeight-logoImages.imageLogoHeight1;
+        var left = 20;//headerRight - invoice.imageLogoWidth1;
+        doc.addImage(logoImages.imageLogo1, 'JPEG', left, y, logoImages.imageLogoWidth1, logoImages.imageLogoHeight1);
+
+    }
+
+    GlobalY = 40;
+    return GlobalY;
+}
+
+
+
+
+function GetReportTemplate4(doc, invoice, layout) {
 
   var client = invoice.client;
   var account = invoice.account;
@@ -22,17 +558,11 @@ function GetReportTemplate4(doc, invoice, layout, checkMath) {
   doc.setDrawColor(200,200,200);
   doc.setFillColor(230,230,230);
   
+  var detailsHeight = getInvoiceDetailsHeight(invoice, layout);
   var left = layout.headerLeft - layout.tablePadding;
-  var top = layout.headerTop + layout.rowHeight + 4;
+  var top = layout.headerTop + detailsHeight - layout.rowHeight - layout.tablePadding;
   var width = layout.headerRight - layout.headerLeft + (2 * layout.tablePadding);
   var height = layout.rowHeight + 1;
-
-  if (invoice.po_number) {
-    top += layout.rowHeight;
-  }
-  if (invoice.due_date) {
-    top += layout.rowHeight;
-  }
   doc.rect(left, top, width, height, 'FD'); 
 
   doc.setFontSize(10);
@@ -40,7 +570,9 @@ function GetReportTemplate4(doc, invoice, layout, checkMath) {
 
   displayAccount(doc, invoice, layout.marginLeft, layout.accountTop, layout);
   displayClient(doc, invoice, layout.marginLeft, layout.headerTop, layout);
+
   displayInvoice(doc, invoice, layout.headerLeft, layout.headerTop, layout, layout.headerRight);
+  layout.tableTop = Math.max(layout.tableTop, layout.headerTop + detailsHeight + (2 * layout.tablePadding));
 
   var headerY = layout.headerTop;
   var total = 0;
@@ -58,28 +590,9 @@ function GetReportTemplate4(doc, invoice, layout, checkMath) {
 
   doc.setFontSize(10);
 
-  /* table footer */
-  /*
-  doc.setDrawColor(200,200,200);  
-  doc.setLineWidth(1);
-  doc.line(layout.marginLeft - layout.tablePadding, x, layout.lineTotalRight+layout.tablePadding, x);
-  */
-
   displayNotesAndTerms(doc, layout, invoice, y+20);
 
   y += displaySubtotals(doc, layout, invoice, y+20, 480) + 20;
-
-  /*
-  if (checkMath && NINJA.parseFloat(total).toFixed(4) != NINJA.parseFloat(invoice.amount).toFixed(4)) 
-  {
-    var doc = new jsPDF('p', 'pt');
-    doc.setFont('Helvetica','');
-    doc.setFontSize(10);
-    doc.text(100, 100, "An error occurred, please try again later.");
-    onerror('Failed to generate PDF ' + total + ', ' + invoice.amount );
-    return doc;   
-  } 
-  */
 
   doc.setDrawColor(200,200,200);
   doc.setFillColor(230,230,230);
@@ -91,25 +604,64 @@ function GetReportTemplate4(doc, invoice, layout, checkMath) {
   doc.rect(left, top, width, height, 'FD'); 
   
   doc.setFontType("bold");
-  doc.text(layout.footerLeft, y, 'Balance Due');
+  doc.text(layout.footerLeft, y, invoice.is_quote ? invoiceLabels.total : invoiceLabels.balance_due);
 
-  total = formatMoney(invoice.balance_amount, currencyId)  
+  total = formatMoney(invoice.balance_amount, currencyId);
   var totalX = layout.headerRight - (doc.getStringUnitWidth(total) * doc.internal.getFontSize());
   doc.text(totalX, y, total);   
 
-  
-  doc.setFontType("normal");
-  doc.text(layout.marginLeft, 790, "Created by InvoiceNinja.com");
+  if (!invoice.is_pro) {
+    doc.setFontType("normal");
+    doc.text(layout.marginLeft, 790, "Created by InvoiceNinja.com");
+  }
 
   return doc;     
 }
 
 
-function generatePDF(invoice, checkMath) {
-    invoice = calculateAmounts(invoice);
-    report_id=invoice.invoice_design_id;
-    doc= GetPdf(invoice,checkMath,report_id);
-    return doc;
+function SetPdfColor(color, doc, role)
+{
+  if (role === 'primary' && NINJA.primaryColor) {
+    return setDocHexColor(doc, NINJA.primaryColor);
+  } else if (role === 'secondary' && NINJA.secondaryColor) {
+    return setDocHexColor(doc, NINJA.secondaryColor);
+  }
+
+  if (color=='LightBlue') {
+      return doc.setTextColor(41,156, 194);
+  }
+
+  if (color=='Black') {
+      return doc.setTextColor(46,43,43);//select color black
+  }
+  if (color=='GrayLogo') {
+      return doc.setTextColor(207,241, 241);//select color Custom Report GRAY
+  }
+
+  if (color=='GrayBackground') {
+      return doc.setTextColor(251,251, 251);//select color Custom Report GRAY
+  }
+
+  if (color=='GrayText') {
+      return doc.setTextColor(161,160,160);//select color Custom Report GRAY Colour
+  }
+
+  if (color=='White') {
+      return doc.setTextColor(255,255,255);//select color Custom Report GRAY Colour
+  }
+
+  if (color=='SomeGreen') {
+      return doc.setTextColor(54,164,152);//select color Custom Report GRAY Colour
+  }
+
+  if (color=='LightGrayReport2-gray') {
+      return doc.setTextColor(240,240,240);//select color Custom Report GRAY Colour
+  }
+
+  if (color=='LightGrayReport2-white') {
+      return doc.setTextColor(251,251,251);//select color Custom Report GRAY Colour
+  }
+
 }
 
 
@@ -374,7 +926,7 @@ function enableHoverClick($combobox, $entityId, url) {
       }
     };
   });
-*/
+  */
 }
 
 function setAsLink($input, enable) {
@@ -403,16 +955,8 @@ var BASE64_MARKER = ';base64,';
 function convertDataURIToBinary(dataURI) {
   var base64Index = dataURI.indexOf(BASE64_MARKER) + BASE64_MARKER.length;
   var base64 = dataURI.substring(base64Index);
-  var raw = window.atob(base64);
-  var rawLength = raw.length;
-  var array = new Uint8Array(new ArrayBuffer(rawLength));
-
-  for(i = 0; i < rawLength; i++) {
-    array[i] = raw.charCodeAt(i);
-  }
-  return array;
+  return base64DecToArr(base64);
 }
-
 
 ko.bindingHandlers.dropdown = {
     init: function (element, valueAccessor, allBindingsAccessor) {
@@ -453,7 +997,7 @@ ko.bindingHandlers.datePicker = {
        if (value) $(element).datepicker('update', value);
        $(element).change(function() { 
           var value = valueAccessor();
-            value($(element).val());
+          value($(element).val());
        })
     },
     update: function (element, valueAccessor) {     
@@ -470,24 +1014,25 @@ function wordWrapText(value, width)
   doc.setFontSize(10);
 
   var lines = value.split("\n");
-    for (var i = 0; i < lines.length; i++) {
-      var numLines = doc.splitTextToSize(lines[i], width).length;
-        if (numLines <= 1) continue;
-        var j = 0; space = lines[i].length;
-        while (j++ < lines[i].length) {
-            if (lines[i].charAt(j) === " ") space = j;
-        }
-        lines[i + 1] = lines[i].substring(space + 1) + ' ' + (lines[i + 1] || "");
-        lines[i] = lines[i].substring(0, space);
+  for (var i = 0; i < lines.length; i++) {
+    var numLines = doc.splitTextToSize(lines[i], width).length;
+    if (numLines <= 1) continue;
+    var j = 0; space = lines[i].length;
+    while (j++ < lines[i].length) {
+      if (lines[i].charAt(j) === ' ') space = j;
     }
-    
-    var newValue = (lines.join("\n")).trim();
+    if (space == lines[i].length) space = width/6;    
+    lines[i + 1] = lines[i].substring(space + 1) + ' ' + (lines[i + 1] || '');
+    lines[i] = lines[i].substring(0, space);
+  }
+  
+  var newValue = (lines.join("\n")).trim();
 
-    if (value == newValue) {
-      return newValue;
-    } else {
-      return wordWrapText(newValue, width);
-    }
+  if (value == newValue) {
+    return newValue;
+  } else {
+    return wordWrapText(newValue, width);
+  }
 }
 
 
@@ -571,7 +1116,7 @@ function populateInvoiceComboboxes(clientId, invoiceId) {
       var client = clientMap[invoice.client.public_id];
       setComboboxValue($('.client-select'), client.public_id, getClientDisplayName(client));
       if (!parseFloat($('#amount').val())) {
-        $('#amount').val(formatMoney(invoice.balance, invoice.currency_id, true));
+        $('#amount').val(parseFloat(invoice.balance).toFixed(2));
       }
     }
   });
@@ -607,636 +1152,7 @@ $.fn.datepicker.defaults.todayHighlight = true;
 
 
 
-//====================================================================================================================
 
-function GetPdf(invoice,checkMath,report_id){
-  var layout = {
-    accountTop: 40,
-    marginLeft: 50,
-    marginRight: 550,
-    headerTop: 150,
-    headerLeft: 360,
-    headerRight: 550,
-    rowHeight: 15,
-    tableRowHeight: 10,
-    footerLeft: 420,
-    tablePadding: 12,
-    tableTop: 260,
-    descriptionLeft: 162,
-    unitCostRight: 410,
-    qtyRight: 480,
-    taxRight: 480,
-    lineTotalRight: 550
-  };
-
-  if (invoice.has_taxes)
-  {
-    layout.descriptionLeft -= 20;
-    layout.unitCostRight -= 40;
-    layout.qtyRight -= 40;
-  } 
-
-  /*
-   @param orientation One of "portrait" or "landscape" (or shortcuts "p" (Default), "l")
-   @param unit Measurement unit to be used when coordinates are specified. One of "pt" (points), "mm" (Default), "cm", "in"
-   @param format One of 'a3', 'a4' (Default),'a5' ,'letter' ,'legal'
-   @returns {jsPDF}
-   */
-  var doc = new jsPDF('portrait', 'pt', 'a4');
-
-
-  //Set PDF properities
-  doc.setProperties({
-      title: 'Invoice ' + invoice.invoice_number,
-      subject: '',
-      author: 'InvoiceNinja.com',
-      keywords: 'pdf, invoice',
-      creator: 'InvoiceNinja.com'
-  });
-
-  //set default style for report
-  doc.setFont('Helvetica','');
-
-  if (report_id==1) {
-    return GetReportTemplate1(doc, invoice, layout, checkMath);
-  } else if (report_id==2) {
-    return GetReportTemplate2(doc, invoice, layout, checkMath);
-  } else if (report_id==3) {
-    return GetReportTemplate3(doc, invoice, layout, checkMath);
-  } else {
-    return GetReportTemplate4(doc, invoice, layout, checkMath);
-  }
-}
-
-function GetReportTemplate1(doc, invoice, layout, checkMath)
-{
-    var GlobalY=0;//Y position of line at current page
-
-    var client = invoice.client;
-    var account = invoice.account;
-    var currencyId = client.currency_id;
-
-    layout.headerRight = 550;
-    layout.rowHeight = 15;
-
-    doc.setFontSize(9);
-
-    if (invoice.image)
-    {
-      var left = layout.headerRight - invoice.imageWidth;
-      doc.addImage(invoice.image, 'JPEG', layout.marginLeft, 30);
-    }
-
-    if (invoice.imageLogo1)
-    {
-      pageHeight=820;
-      y=pageHeight-invoice.imageLogoHeight1;
-      doc.addImage(invoice.imageLogo1, 'JPEG', layout.marginLeft, y, invoice.imageLogoWidth1, invoice.imageLogoHeight1);
-    }
-
-
-    doc.setFontSize(9);
-    SetPdfColor('LightBlue',doc);
-    displayAccount(doc, invoice, 220, layout.accountTop, layout);
-
-    SetPdfColor('LightBlue',doc);
-    doc.setFontSize('11');
-    doc.text(50, layout.headerTop, invoiceLabels.invoice.toUpperCase());
-
-    //doc.setDrawColor(220,220,220);
-    //doc.line(30, y, 560, y); // horizontal line
-
-
-    SetPdfColor('Black',doc); //set black color
-    doc.setFontSize(9);
-
-    displayInvoice(doc, invoice, 50, 170, layout);
-    displayClient(doc, invoice, 220, 170, layout);
-
-    doc.setLineWidth(0.3);        
-    doc.setDrawColor(200,200,200);
-    doc.line(layout.marginLeft - layout.tablePadding, layout.headerTop + 6, layout.marginRight + layout.tablePadding, layout.headerTop + 6);
-    doc.line(layout.marginLeft - layout.tablePadding, layout.tableTop - 20, layout.marginRight + layout.tablePadding, layout.tableTop - 20);
- 
-
-    //doc.setDrawColor(220,220,220);
-    //doc.line(30, y-8, 560, y-8); // horizontal line
-
-
-    doc.setFontSize(10);
-    doc.setFontType("bold");
-    displayInvoiceHeader(doc, invoice, layout);
-    var y = displayInvoiceItems(doc, invoice, layout);
-
-    //doc.setFontType("normal");
-    doc.setFontSize(9);
-
-    doc.setFontType("bold");
-
-    GlobalY=GlobalY+25;
-
-
-    doc.setLineWidth(0.3);
-    doc.setDrawColor(241,241,241);
-    doc.setFillColor(241,241,241);
-    var x1 = layout.marginLeft - 12;
-    var y1 = GlobalY-layout.tablePadding;
-
-    var w2 = 510 + 24;
-    var h2 = doc.internal.getFontSize()*3+layout.tablePadding*2;
-
-    if (invoice.discount) {
-        h2 += doc.internal.getFontSize()*2;
-    }
-    if (invoice.tax_amount) {
-        h2 += doc.internal.getFontSize()*2;
-    }
-
-    //doc.rect(x1, y1, w2, h2, 'FD');
-
-    doc.setFontSize(9);
-    displayNotesAndTerms(doc, layout, invoice, y);
-    y += displaySubtotals(doc, layout, invoice, y, layout.unitCostRight);
-
-
-    doc.setFontSize(10);
-    Msg='Balance Due';
-    var TmpMsgX = layout.unitCostRight-(doc.getStringUnitWidth(Msg) * doc.internal.getFontSize());
-    
-    doc.text(TmpMsgX, y, Msg);
-
-    SetPdfColor('LightBlue',doc);
-    AmountText = formatMoney(invoice.balance_amount, currencyId);
-    headerLeft=layout.headerRight+400;
-    var AmountX = layout.lineTotalRight - (doc.getStringUnitWidth(AmountText) * doc.internal.getFontSize());
-    doc.text(AmountX, y, AmountText);
-
-    return doc;
-}
-
-
-
-
-function GetReportTemplate2(doc, invoice, layout, checkMath)
-{
-  var GlobalY=0;//Y position of line at current page
-
-  var client = invoice.client;
-  var account = invoice.account;
-  var currencyId = client.currency_id;
-
-  layout.headerRight = 150;
-  layout.rowHeight = 15;
-  layout.headerTop = 125;
-  layout.tableTop = 300;
-
-  doc.setLineWidth(0.5);
-  doc.setFillColor(46,43,43);
-  doc.setFillColor(46,43,43);
-
-  var x1 =0;
-  var y1 = 0;
-  var w2 = 595;
-  var h2 = 100;
-  doc.rect(x1, y1, w2, h2, 'FD');
-
-
-  if (invoice.image)
-  {
-      var left = layout.headerRight - invoice.imageWidth;
-      doc.addImage(invoice.image, 'JPEG', layout.marginLeft, 30);
-  }
-
-  Report2AddFooter (invoice,doc);
-
-
-  doc.setFontSize(7);
-  doc.setFontType("bold");
-  SetPdfColor('White',doc);
-
-  displayAccount(doc, invoice, 300, layout.accountTop, layout);
-
-  /*
-  var spacer = '     ';
-  var line1 = account.name + spacer + account.work_email + spacer + account.work_phone;
-  var lineWidth = doc.getStringUnitWidth(line1) * doc.internal.getFontSize();
-  var nameWidth = doc.getStringUnitWidth(account.name + spacer) * doc.internal.getFontSize();
-  var nameX = lineTotalRight - lineWidth;
-  var detailsX = lineTotalRight - (lineWidth - nameWidth);  
-  
-  doc.text(nameX, accountTop, account.name);  
-  doc.setFontType("normal");
-  doc.text(detailsX, accountTop, account.work_email + spacer + account.work_phone);  
-
-  var line2 = concatStrings(account.address1, account.address2) + spacer + concatStrings(account.city, account.state, account.postal_code);
-  var lineWidth = doc.getStringUnitWidth(line2) * doc.internal.getFontSize();
-  var line2X = lineTotalRight - lineWidth;
-
-  doc.text(line2X, accountTop + 16, line2);  
-  */
-
-//-----------------------------Publish Client Details block--------------------------------------------
-
-  var y = layout.accountTop;
-  var left = layout.marginLeft;
-
-  var headerY = layout.headerTop;
-
-
-
-  SetPdfColor('GrayLogo',doc); //set black color
-
-
-  doc.setFontSize(7);
-
-  //show left column
-  SetPdfColor('Black',doc); //set black color
-  doc.setFontType("normal");
-
-
-  //publish filled box
-  doc.setDrawColor(200,200,200);
-  doc.setFillColor(54,164,152);
-
-  GlobalY=190;
-  doc.setLineWidth(0.5);
-
-  var BlockLenght=220;
-  var x1 =595-BlockLenght;
-  var y1 = GlobalY-12;
-  var w2 = BlockLenght;
-  var h2 = 60;
-  if (invoice.due_date) {
-    h2 += 15;
-  }
-  if (invoice.po_number) {
-    h2 += 15;
-  }
-  doc.rect(x1, y1, w2, h2, 'FD');
-
-
-
-  SetPdfColor('SomeGreen',doc);
-  doc.setFontSize('14');
-  doc.setFontType("bold");
-  doc.text(50, GlobalY, invoiceLabels.your_invoice.toUpperCase());
-
-
-  var z=GlobalY;
-  z=z+30;
-
-
-  doc.setFontSize('8');        
-  SetPdfColor('Black',doc);
-  displayClient(doc, invoice, layout.marginLeft, z, layout);
-
-
-  marginLeft2=395;
-
-  //publish left side information
-
-  SetPdfColor('White',doc);
-  doc.setFontSize('8');
-  displayInvoice(doc, invoice, marginLeft2, z-25, layout);
-
-  y=z+60;
-
-
-  x = GlobalY + 100;
-  
-  doc.setFontType("bold");
-
-
-
-  doc.setFontSize(12);
-  doc.setFontType("bold");
-  SetPdfColor('Black',doc);
-  displayInvoiceHeader(doc, invoice, layout);
-  var y = displayInvoiceItems(doc, invoice, layout);
-
-  //GlobalY=600;
-
-  doc.setLineWidth(0.3);
-
-  /*
-  doc.setDrawColor(251,251,251);
-  doc.setFillColor(251,251,251);
-  var x1 = layout.marginLeft-layout.tablePadding*2 +14;
-  var y1 = GlobalY-layout.tablePadding;
-  var w2 = 510+layout.tablePadding*2;//lineTotalRight-tablePadding*5;
-  var h2 = doc.internal.getFontSize()*3+layout.tablePadding*2;
-  doc.rect(x1, y1, w2, h2, 'FD');
-  */
-
-  displayNotesAndTerms(doc, layout, invoice, y);
-  y += displaySubtotals(doc, layout, invoice, y, layout.unitCostRight);
-
-  doc.setFontType("bold");
-
-  doc.setFontSize(12);
-  x += doc.internal.getFontSize()*4;
-  Msg='Balance Due';
-  var TmpMsgX = layout.unitCostRight-(doc.getStringUnitWidth(Msg) * doc.internal.getFontSize());
-
-
-
-  doc.text(TmpMsgX, y, Msg);
-
-
-  //SetPdfColor('LightBlue',doc);
-  AmountText = formatMoney(invoice.balance_amount , currencyId);
-  headerLeft=layout.headerRight+400;
-  var AmountX = headerLeft - (doc.getStringUnitWidth(AmountText) * doc.internal.getFontSize());
-  SetPdfColor('SomeGreen',doc);
-  doc.text(AmountX, y, AmountText);
-
-
-
-  return doc;
-}
-
-
-
-
-
-
-
-function SetPdfColor(color,doc)
-{
-
-    if (color=='LightBlue') {
-        return doc.setTextColor(41,156, 194);
-    }
-
-    if (color=='Black') {
-        return doc.setTextColor(46,43,43);//select color black
-    }
-    if (color=='GrayLogo') {
-        //return doc.setTextColor(207,209, 210);//select color Custom Report GRAY
-        return doc.setTextColor(207,241, 241);//select color Custom Report GRAY
-    }
-
-    if (color=='GrayBackground') {
-        //return doc.setTextColor(207,209, 210);//select color Custom Report GRAY
-        return doc.setTextColor(251,251, 251);//select color Custom Report GRAY
-    }
-
-
-
-    if (color=='GrayText') {
-        return doc.setTextColor(161,160,160);//select color Custom Report GRAY Colour
-    }
-
-    if (color=='White') {
-        return doc.setTextColor(255,255,255);//select color Custom Report GRAY Colour
-    }
-
-
-
-    if (color=='SomeGreen') {
-        return doc.setTextColor(54,164,152);//select color Custom Report GRAY Colour
-    }
-
-
-
-
-    if (color=='LightGrayReport2-gray') {
-        return doc.setTextColor(240,240,240);//select color Custom Report GRAY Colour
-    }
-
-    if (color=='LightGrayReport2-white') {
-        return doc.setTextColor(251,251,251);//select color Custom Report GRAY Colour
-    }
-
-
-
-
-    alert('color is not defined');
-    return false;
-
-}
-
-
-function Report2AddFooter (invoice,doc)
-{
-
-    doc.setLineWidth(0.5);
-    doc.setDrawColor(41,37,37);
-    doc.setFillColor(41,37,37);
-
-
-    // return doc.setTextColor(240,240,240);//select color Custom Report GRAY Colour
-
-
-
-
-    var x1 = 0;//tableLeft-tablePadding ;
-
-    var y1 = 750;
-
-    var w2 = 596;
-    var h2 = 94;//doc.internal.getFontSize()*length+length*1.1;//+h;//+tablePadding;
-
-
-
-    doc.rect(x1, y1, w2, h2, 'FD');
-
-
-    if (invoice.imageLogo2)
-    {
-        pageHeight=820;
-        var left = 250;//headerRight ;
-        y=pageHeight-invoice.imageLogoHeight2;
-        var headerRight=370;
-
-        var left = headerRight - invoice.imageLogoWidth2;
-        doc.addImage(invoice.imageLogo2, 'JPEG', left, y, invoice.imageLogoWidth2, invoice.imageLogoHeight2);
-
-
-    }
-
-
-
-}
-
-function Report3AddFooter (invoice, account, doc, layout)
-{
-
-    doc.setLineWidth(0.5);
-    doc.setDrawColor(242,101,34);
-    doc.setFillColor(242,101,34);
-
-    // return doc.setTextColor(240,240,240);//select color Custom Report GRAY Colour
-
-
-
-
-    var x1 = 0;//tableLeft-tablePadding ;
-
-    var y1 = 750;
-
-    var w2 = 596;
-    var h2 = 94;//doc.internal.getFontSize()*length+length*1.1;//+h;//+tablePadding;
-
-
-
-    doc.rect(x1, y1, w2, h2, 'FD');
-
-
-    if (invoice.imageLogo3)
-    {
-        pageHeight=820;
-      // var left = 25;//250;//headerRight ;
-        y=pageHeight-invoice.imageLogoHeight3;
-        //var headerRight=370;
-
-        //var left = headerRight - invoice.imageLogoWidth3;
-        doc.addImage(invoice.imageLogo3, 'JPEG', 40, y, invoice.imageLogoWidth3, invoice.imageLogoHeight3);
-
-
-    }
-
-
-    doc.setFontSize(10);  
-    var marginLeft = 340;
-    displayAccount(doc, invoice, marginLeft, 780, layout);
-}
-
-
-
-function GetReportTemplate3(doc, invoice, layout, checkMath)
-{
-    var client = invoice.client;
-    var account = invoice.account;
-    var currencyId = client.currency_id;
-
-    layout.headerRight = 400;
-    layout.rowHeight = 15;
-
-
-    doc.setFontSize(7);
-
-    Report3AddHeader (invoice,account,doc);
-
-    if (invoice.image)
-    {
-        y=130;
-        var left = layout.headerRight - invoice.imageWidth;
-        doc.addImage(invoice.image, 'JPEG', layout.marginLeft, y);
-    }
-
-    Report3AddFooter (invoice, account, doc, layout);
-
-
-    SetPdfColor('Black',doc); //set black color
-    doc.setFontSize(7);
-    doc.setFontType("normal");
-    displayClient(doc, invoice, layout.headerRight, layout.headerTop, layout);
-
-    SetPdfColor('White',doc);    
-    doc.setFontSize('8');
-    displayInvoice(doc, invoice, layout.headerRight, layout.accountTop, layout);
-
-
-      
-    doc.setFontType("bold");
-
-    doc.setLineWidth(0.3);
-    doc.setDrawColor(63,60,60);
-    doc.setFillColor(63,60,60);
-    var left = layout.marginLeft - layout.tablePadding;
-    var top = layout.tableTop - layout.tablePadding;
-    var width = layout.marginRight - (2 * layout.tablePadding);
-    var height = 20;
-    doc.rect(left, top, width, height, 'FD');
-    
-
-    displayInvoiceHeader(doc, invoice, layout);
-    SetPdfColor('Black',doc);
-    var y = displayInvoiceItems(doc, invoice, layout);
-
-
-    var height1 = displayNotesAndTerms(doc, layout, invoice, y);
-    var height2 = displaySubtotals(doc, layout, invoice, y, layout.unitCostRight);
-    y += Math.max(height1, height2);
-
-
-    var left = layout.marginLeft - layout.tablePadding;
-    var top = y - layout.tablePadding;
-    var width = layout.marginRight - (2 * layout.tablePadding);
-    var height = 20;
-    doc.rect(left, top, width, height, 'FD');
-    
-    doc.setFontType('bold');
-    SetPdfColor('White', doc);
-    doc.setFontSize(12);
-    
-    var label='Balance Due';
-    var labelX = layout.unitCostRight-(doc.getStringUnitWidth(label) * doc.internal.getFontSize());
-    doc.text(labelX, y+2, label);
-
-
-    doc.setFontType('normal');
-    var amount = formatMoney(invoice.balance_amount , currencyId);
-    headerLeft=layout.headerRight+400;
-    var amountX = layout.lineTotalRight - (doc.getStringUnitWidth(amount) * doc.internal.getFontSize());
-    doc.text(amountX, y+2, amount);
-
-    return doc;
-}
-
-
-
-
-function Report3AddHeader (invoice,account,doc)
-{
-    doc.setLineWidth(0.5);
-    //doc.setFillColor( 46,43,43);
-    //doc.setFillColor( 46,43,43);
-    doc.setDrawColor(242,101,34);
-    doc.setFillColor(242,101,34);
-    var x1 =0;
-    var y1 = 0;
-    var w2 = 595;
-    var h2 = 110;
-    doc.rect(x1, y1, w2, h2, 'FD');
-
-    SetPdfColor('White',doc);
-    //second column
-    doc.setFontType("bold");
-    var MaxWidth=594;
-    var LineOne= account.name;
-    var AlignLine = MaxWidth-30- (doc.getStringUnitWidth(LineOne) * doc.internal.getFontSize());
-    if (account.name) {
-
-        //SetPdfColor('SomeGreen',doc);
-        doc.setFontSize('36');
-        doc.setFontType("bold");
-        doc.text(40,50, LineOne);
-
-        doc.setFontType("normal");
-        doc.setFontSize('7');
-    }
-
-
-}
-
-
-function Report1AddNewPage(invoice,account,doc)
-{
-    doc.addPage();
-    if (invoice.imageLogo1)
-    {
-        pageHeight=820;
-        y=pageHeight-invoice.imageLogoHeight1;
-        var left = 20;//headerRight - invoice.imageLogoWidth1;
-        doc.addImage(invoice.imageLogo1, 'JPEG', left, y, invoice.imageLogoWidth1, invoice.imageLogoHeight1);
-
-    }
-
-    GlobalY = 40;
-    return GlobalY;
-}
 
 function displayAccount(doc, invoice, x, y, layout) {
   var account = invoice.account;
@@ -1251,7 +1167,7 @@ function displayAccount(doc, invoice, x, y, layout) {
     account.work_phone
   ];
 
-  displayGrid(doc, invoice, data, x, y, layout, true);
+  displayGrid(doc, invoice, data, x, y, layout, {hasHeader:true});
 
   data = [
     concatStrings(account.address1, account.address2),
@@ -1259,8 +1175,10 @@ function displayAccount(doc, invoice, x, y, layout) {
     account.country ? account.country.name : false
   ];
 
-  var width = doc.getStringUnitWidth(account.name) * doc.internal.getFontSize() * 1.1;
-  width = Math.max(120, width);
+  var nameWidth = account.name ? (doc.getStringUnitWidth(account.name) * doc.internal.getFontSize() * 1.1) : 0;
+  var emailWidth = account.work_email ? (doc.getStringUnitWidth(account.work_email) * doc.internal.getFontSize() * 1.1) : 0;
+  width = Math.max(emailWidth, nameWidth, 120);
+
   x += width;
 
   displayGrid(doc, invoice, data, x, y, layout);  
@@ -1280,7 +1198,7 @@ function displayClient(doc, invoice, x, y, layout) {
     client.contacts[0].email
   ];
 
-  displayGrid(doc, invoice, data, x, y, layout, true);
+  return displayGrid(doc, invoice, data, x, y, layout, {hasheader:true});
 }
 
 function displayInvoice(doc, invoice, x, y, layout, rightAlignX) {
@@ -1288,15 +1206,47 @@ function displayInvoice(doc, invoice, x, y, layout, rightAlignX) {
     return;
   }
 
-  var data = [
+  var data = getInvoiceDetails(invoice);
+  var options = {
+    hasheader: true,
+    rightAlignX: rightAlignX,
+  };
+
+  return displayGrid(doc, invoice, data, x, y, layout, options);
+}
+
+function getInvoiceDetails(invoice) {
+  return [
     {'invoice_number': invoice.invoice_number},
     {'po_number': invoice.po_number},
     {'invoice_date': invoice.invoice_date},
     {'due_date': invoice.due_date},
-    {'balance_due': formatMoney(invoice.balance_amount, invoice.client.currency_id)}
-  ];  
+    {'custom_label1': invoice.account.custom_value1},
+    {'custom_label2': invoice.account.custom_value2},
+    {'custom_client_label1': invoice.client.custom_value1},
+    {'custom_client_label2': invoice.client.custom_value2},
+    {'balance_due': formatMoney(invoice.balance_amount, invoice.client.currency_id)},
+  ]; 
+}
 
-  displayGrid(doc, invoice, data, x, y, layout, true, rightAlignX);
+function getInvoiceDetailsHeight(invoice, layout) {
+  var data = getInvoiceDetails(invoice);
+  var count = 0;
+  for (var key in data) {
+    if (!data.hasOwnProperty(key)) {
+      continue;
+    }
+    var obj = data[key];
+    for (var subKey in obj) {
+      if (!obj.hasOwnProperty(subKey)) {
+        continue;
+      }
+      if (obj[subKey]) {
+        count++;
+      }
+    }
+  }
+  return count * layout.rowHeight;
 }
 
 function displaySubtotals(doc, layout, invoice, y, rightAlignTitleX)
@@ -1305,15 +1255,39 @@ function displaySubtotals(doc, layout, invoice, y, rightAlignTitleX)
     return;
   }
 
-  //var taxTitle = 'Tax ' + getInvoiceTaxRate(invoice) + '%';
   var data = [
     {'subtotal': formatMoney(invoice.subtotal_amount, invoice.client.currency_id)},
-    {'discount': invoice.discount_amount > 0 ? formatMoney(invoice.discount_amount, invoice.client.currency_id) : false},
-    {'tax': invoice.tax_amount > 0 ? formatMoney(invoice.tax_amount, invoice.client.currency_id) : false},
-    {'paid_to_date': formatMoney(invoice.amount - invoice.balance, invoice.client.currency_id)}
+    {'discount': invoice.discount_amount > 0 ? formatMoney(invoice.discount_amount, invoice.client.currency_id) : false}
   ];
 
-  return displayGrid(doc, invoice, data, 300, y, layout, true, 550, rightAlignTitleX) + 10;
+  if (NINJA.parseFloat(invoice.custom_value1) && invoice.custom_taxes1 == '1') {    
+    data.push({'custom_invoice_label1': formatMoney(invoice.custom_value1, invoice.client.currency_id) })
+  }
+  if (NINJA.parseFloat(invoice.custom_value2) && invoice.custom_taxes2 == '1') {
+    data.push({'custom_invoice_label2': formatMoney(invoice.custom_value2, invoice.client.currency_id) }) 
+  }
+
+  data.push({'tax': invoice.tax_amount > 0 ? formatMoney(invoice.tax_amount, invoice.client.currency_id) : false});
+
+  if (NINJA.parseFloat(invoice.custom_value1) && invoice.custom_taxes1 != '1') {    
+    data.push({'custom_invoice_label1': formatMoney(invoice.custom_value1, invoice.client.currency_id) })
+  }
+  if (NINJA.parseFloat(invoice.custom_value2) && invoice.custom_taxes2 != '1') {
+    data.push({'custom_invoice_label2': formatMoney(invoice.custom_value2, invoice.client.currency_id) }) 
+  }
+
+  var paid = invoice.amount - invoice.balance;
+  if (invoice.account.hide_paid_to_date != '1' || paid) {
+    data.push({'paid_to_date': formatMoney(paid, invoice.client.currency_id)});
+  }
+
+  var options = {
+    hasheader: true,
+    rightAlignX: 550,
+    rightAlignTitleX: rightAlignTitleX    
+  };
+
+  return displayGrid(doc, invoice, data, 300, y, layout, options) + 10;
 }
 
 function concatStrings() {
@@ -1336,10 +1310,10 @@ function concatStrings() {
   return data.length ? concatStr : false;
 }
 
-function displayGrid(doc, invoice, data, x, y, layout, hasheader, rightAlignX, rightAlignTitleX)  {
+//function displayGrid(doc, invoice, data, x, y, layout, hasheader, rightAlignX, rightAlignTitleX)  {
+function displayGrid(doc, invoice, data, x, y, layout, options)  {
   var numLines = 0;
   var origY = y;
-
   for (var i=0; i<data.length; i++) {
     doc.setFontType('normal');
       
@@ -1352,7 +1326,7 @@ function displayGrid(doc, invoice, data, x, y, layout, hasheader, rightAlignX, r
       continue;
     }
 
-    if (hasheader && i === 0 && !rightAlignTitleX) {
+    if (options && (options.hasheader && i === 0 && !options.rightAlignTitleX)) {
       doc.setFontType('bold');
     }
 
@@ -1367,26 +1341,32 @@ function displayGrid(doc, invoice, data, x, y, layout, hasheader, rightAlignX, r
       }  
 
       var marginLeft;
-      if (rightAlignX) {
-        marginLeft = rightAlignX - (doc.getStringUnitWidth(value) * doc.internal.getFontSize());          
+      if (options.rightAlignX) {
+        marginLeft = options.rightAlignX - (doc.getStringUnitWidth(value) * doc.internal.getFontSize());          
       } else {
         marginLeft = x + 80;
       }
-      doc.text(marginLeft, y, value);        
-
-      /*
-      if (rightAlignTitleX && i === 0) {
-        doc.setFontType('bold');
-      } else {
-        doc.setFontType('normal');
-      }
-      */
+      doc.text(marginLeft, y, value);       
       
       doc.setFontType('normal');
-      key = invoiceLabels[key];
+      if (invoice.is_quote) {
+        if (key == 'invoice_number') {
+          key = 'quote_number';
+        } else if (key == 'invoice_date') {
+          key = 'quote_date';
+        } else if (key == 'balance_due') {
+          key = 'total';
+        }
+      }
 
-      if (rightAlignTitleX) {
-        marginLeft = rightAlignTitleX - (doc.getStringUnitWidth(key) * doc.internal.getFontSize());
+      if (key.substring(0, 6) === 'custom') {
+        key = invoice.account[key];
+      } else {
+        key = invoiceLabels[key];
+      }
+
+      if (options.rightAlignTitleX) {
+        marginLeft = options.rightAlignTitleX - (doc.getStringUnitWidth(key) * doc.internal.getFontSize());
       } else {
         marginLeft = x;
       }
@@ -1440,7 +1420,7 @@ function calculateAmounts(invoice) {
 
     var lineTotal = NINJA.parseFloat(item.cost) * NINJA.parseFloat(item.qty);
     if (tax) {
-      lineTotal += lineTotal * tax / 100;
+      lineTotal += roundToTwo(lineTotal * tax / 100);
     }
     if (lineTotal) {
       total += lineTotal;
@@ -1454,9 +1434,16 @@ function calculateAmounts(invoice) {
   invoice.subtotal_amount = total;
 
   if (invoice.discount > 0) {
-
-    var discount = total * (invoice.discount/100);
+    var discount = roundToTwo(total * (invoice.discount/100));
     total -= discount;
+  }
+
+  // custom fields with taxes
+  if (NINJA.parseFloat(invoice.custom_value1) && invoice.custom_taxes1 == '1') {    
+    total += roundToTwo(invoice.custom_value1);    
+  }
+  if (NINJA.parseFloat(invoice.custom_value2) && invoice.custom_taxes2 == '1') {
+    total += roundToTwo(invoice.custom_value2);    
   }
 
   var tax = 0;
@@ -1464,16 +1451,24 @@ function calculateAmounts(invoice) {
     tax = parseFloat(invoice.tax.rate);
   } else if (invoice.tax_rate && parseFloat(invoice.tax_rate)) {
     tax = parseFloat(invoice.tax_rate);
-  }   
+  }
 
   if (tax) {
-    var tax = total * (tax/100);
+    var tax = roundToTwo(total * (tax/100));
     total = parseFloat(total) + parseFloat(tax);
   }
 
-  invoice.balance_amount = total - (invoice.amount - invoice.balance);
-  invoice.tax_amount = tax;
+  // custom fields w/o with taxes
+  if (NINJA.parseFloat(invoice.custom_value1) && invoice.custom_taxes1 != '1') {    
+    total += roundToTwo(invoice.custom_value1);    
+  }
+  if (NINJA.parseFloat(invoice.custom_value2) && invoice.custom_taxes2 != '1') {
+    total += roundToTwo(invoice.custom_value2);    
+  }
+
+  invoice.balance_amount = roundToTwo(total) - (roundToTwo(invoice.amount) - roundToTwo(invoice.balance));
   invoice.discount_amount = discount;
+  invoice.tax_amount = tax;
   invoice.has_taxes = hasTaxes;
 
   return invoice;
@@ -1499,14 +1494,15 @@ function displayInvoiceHeader(doc, invoice, layout) {
   doc.text(layout.marginLeft, layout.tableTop, invoiceLabels.item);
   doc.text(layout.descriptionLeft, layout.tableTop, invoiceLabels.description);
   doc.text(costX, layout.tableTop, invoiceLabels.unit_cost);
-  doc.text(qtyX, layout.tableTop, invoiceLabels.quantity);
+  if (invoice.account.hide_quantity != '1') {
+    doc.text(qtyX, layout.tableTop, invoiceLabels.quantity);
+  }
   doc.text(totalX, layout.tableTop, invoiceLabels.line_total);
 
   if (invoice.has_taxes)
   {
     doc.text(taxX, layout.tableTop, invoiceLabels.tax);
   }
-
 }
 
 function displayInvoiceItems(doc, invoice, layout) {
@@ -1515,8 +1511,9 @@ function displayInvoiceItems(doc, invoice, layout) {
   var line = 1;
   var total = 0;
   var shownItem = false;
-  var currencyId = invoice && invoice.client ? invoice.client.currency_id : 1;
+  var currencyId = invoice && invoice.client ? invoice.client.currency_id : 1;  
   var tableTop = layout.tableTop;
+  var hideQuantity = invoice.account.hide_quantity == '1';  
 
   doc.setFontSize(8);
   for (var i=0; i<invoice.invoice_items.length; i++) {
@@ -1552,15 +1549,17 @@ function displayInvoiceItems(doc, invoice, layout) {
     }   
 
     // show at most one blank line
-    if (shownItem && (!cost || cost == '0.00') && !qty && !notes && !productKey) {
+    if (shownItem && (!cost || cost == '0.00') && !notes && !productKey) {
       continue;
     }   
     shownItem = true;
 
     // process date variables
-    notes = processVariables(notes);
-    productKey = processVariables(productKey);
-
+    if (invoice.is_recurring) {
+      notes = processVariables(notes);
+      productKey = processVariables(productKey);
+    }
+    
     var lineTotal = NINJA.parseFloat(item.cost) * NINJA.parseFloat(item.qty);
     if (tax) {
       lineTotal += lineTotal * tax / 100;
@@ -1568,7 +1567,7 @@ function displayInvoiceItems(doc, invoice, layout) {
     if (lineTotal) {
       total += lineTotal;
     }
-    lineTotal = formatMoney(lineTotal, currencyId, true);
+    lineTotal = formatMoney(lineTotal, currencyId);
     
     var costX = layout.unitCostRight - (doc.getStringUnitWidth(cost) * doc.internal.getFontSize());
     var qtyX = layout.qtyRight - (doc.getStringUnitWidth(qty) * doc.internal.getFontSize());
@@ -1609,9 +1608,9 @@ function displayInvoiceItems(doc, invoice, layout) {
     y += 4;
 
     if (invoice.invoice_design_id == 1) {
-      SetPdfColor('LightBlue', doc);
+      SetPdfColor('LightBlue', doc, 'primary');
     } else if (invoice.invoice_design_id == 2) {
-      SetPdfColor('SomeGreen', doc);
+      SetPdfColor('SomeGreen', doc, 'primary');
     } else if (invoice.invoice_design_id == 3) {
       doc.setFontType('bold');
     } else {
@@ -1624,7 +1623,9 @@ function displayInvoiceItems(doc, invoice, layout) {
 
     doc.text(layout.descriptionLeft, y+2, notes);
     doc.text(costX, y+2, cost);
-    doc.text(qtyX, y+2, qty);
+    if (!hideQuantity) {
+      doc.text(qtyX, y+2, qty);
+    }
     doc.text(totalX, y+2, lineTotal);
 
     if (tax) {
@@ -1647,4 +1648,245 @@ function displayInvoiceItems(doc, invoice, layout) {
   }
 
   return y;
+}
+
+// http://stackoverflow.com/questions/1068834/object-comparison-in-javascript
+function objectEquals(x, y) {
+    // if both are function
+    if (x instanceof Function) {
+        if (y instanceof Function) {
+            return x.toString() === y.toString();
+        }
+        return false;
+    }
+    if (x === null || x === undefined || y === null || y === undefined) { return x === y; }
+    if (x === y || x.valueOf() === y.valueOf()) { return true; }
+
+    // if one of them is date, they must had equal valueOf
+    if (x instanceof Date) { return false; }
+    if (y instanceof Date) { return false; }
+
+    // if they are not function or strictly equal, they both need to be Objects
+    if (!(x instanceof Object)) { return false; }
+    if (!(y instanceof Object)) { return false; }
+
+    var p = Object.keys(x);
+    return Object.keys(y).every(function (i) { return p.indexOf(i) !== -1; }) ?
+            p.every(function (i) { return objectEquals(x[i], y[i]); }) : false;
+}
+
+
+
+/*\
+|*|
+|*|  Base64 / binary data / UTF-8 strings utilities
+|*|
+|*|  https://developer.mozilla.org/en-US/docs/Web/JavaScript/Base64_encoding_and_decoding
+|*|
+\*/
+
+/* Array of bytes to base64 string decoding */
+
+function b64ToUint6 (nChr) {
+
+  return nChr > 64 && nChr < 91 ?
+      nChr - 65
+    : nChr > 96 && nChr < 123 ?
+      nChr - 71
+    : nChr > 47 && nChr < 58 ?
+      nChr + 4
+    : nChr === 43 ?
+      62
+    : nChr === 47 ?
+      63
+    :
+      0;
+
+}
+
+function base64DecToArr (sBase64, nBlocksSize) {
+
+  var
+    sB64Enc = sBase64.replace(/[^A-Za-z0-9\+\/]/g, ""), nInLen = sB64Enc.length,
+    nOutLen = nBlocksSize ? Math.ceil((nInLen * 3 + 1 >> 2) / nBlocksSize) * nBlocksSize : nInLen * 3 + 1 >> 2, taBytes = new Uint8Array(nOutLen);
+
+  for (var nMod3, nMod4, nUint24 = 0, nOutIdx = 0, nInIdx = 0; nInIdx < nInLen; nInIdx++) {
+    nMod4 = nInIdx & 3;
+    nUint24 |= b64ToUint6(sB64Enc.charCodeAt(nInIdx)) << 18 - 6 * nMod4;
+    if (nMod4 === 3 || nInLen - nInIdx === 1) {
+      for (nMod3 = 0; nMod3 < 3 && nOutIdx < nOutLen; nMod3++, nOutIdx++) {
+        taBytes[nOutIdx] = nUint24 >>> (16 >>> nMod3 & 24) & 255;
+      }
+      nUint24 = 0;
+
+    }
+  }
+
+  return taBytes;
+}
+
+/* Base64 string to array encoding */
+
+function uint6ToB64 (nUint6) {
+
+  return nUint6 < 26 ?
+      nUint6 + 65
+    : nUint6 < 52 ?
+      nUint6 + 71
+    : nUint6 < 62 ?
+      nUint6 - 4
+    : nUint6 === 62 ?
+      43
+    : nUint6 === 63 ?
+      47
+    :
+      65;
+
+}
+
+function base64EncArr (aBytes) {
+
+  var nMod3 = 2, sB64Enc = "";
+
+  for (var nLen = aBytes.length, nUint24 = 0, nIdx = 0; nIdx < nLen; nIdx++) {
+    nMod3 = nIdx % 3;
+    if (nIdx > 0 && (nIdx * 4 / 3) % 76 === 0) { sB64Enc += "\r\n"; }
+    nUint24 |= aBytes[nIdx] << (16 >>> nMod3 & 24);
+    if (nMod3 === 2 || aBytes.length - nIdx === 1) {
+      sB64Enc += String.fromCharCode(uint6ToB64(nUint24 >>> 18 & 63), uint6ToB64(nUint24 >>> 12 & 63), uint6ToB64(nUint24 >>> 6 & 63), uint6ToB64(nUint24 & 63));
+      nUint24 = 0;
+    }
+  }
+
+  return sB64Enc.substr(0, sB64Enc.length - 2 + nMod3) + (nMod3 === 2 ? '' : nMod3 === 1 ? '=' : '==');
+
+}
+
+/* UTF-8 array to DOMString and vice versa */
+
+function UTF8ArrToStr (aBytes) {
+
+  var sView = "";
+
+  for (var nPart, nLen = aBytes.length, nIdx = 0; nIdx < nLen; nIdx++) {
+    nPart = aBytes[nIdx];
+    sView += String.fromCharCode(
+      nPart > 251 && nPart < 254 && nIdx + 5 < nLen ? /* six bytes */
+        /* (nPart - 252 << 32) is not possible in ECMAScript! So...: */
+        (nPart - 252) * 1073741824 + (aBytes[++nIdx] - 128 << 24) + (aBytes[++nIdx] - 128 << 18) + (aBytes[++nIdx] - 128 << 12) + (aBytes[++nIdx] - 128 << 6) + aBytes[++nIdx] - 128
+      : nPart > 247 && nPart < 252 && nIdx + 4 < nLen ? /* five bytes */
+        (nPart - 248 << 24) + (aBytes[++nIdx] - 128 << 18) + (aBytes[++nIdx] - 128 << 12) + (aBytes[++nIdx] - 128 << 6) + aBytes[++nIdx] - 128
+      : nPart > 239 && nPart < 248 && nIdx + 3 < nLen ? /* four bytes */
+        (nPart - 240 << 18) + (aBytes[++nIdx] - 128 << 12) + (aBytes[++nIdx] - 128 << 6) + aBytes[++nIdx] - 128
+      : nPart > 223 && nPart < 240 && nIdx + 2 < nLen ? /* three bytes */
+        (nPart - 224 << 12) + (aBytes[++nIdx] - 128 << 6) + aBytes[++nIdx] - 128
+      : nPart > 191 && nPart < 224 && nIdx + 1 < nLen ? /* two bytes */
+        (nPart - 192 << 6) + aBytes[++nIdx] - 128
+      : /* nPart < 127 ? */ /* one byte */
+        nPart
+    );
+  }
+
+  return sView;
+
+}
+
+function strToUTF8Arr (sDOMStr) {
+
+  var aBytes, nChr, nStrLen = sDOMStr.length, nArrLen = 0;
+
+  /* mapping... */
+
+  for (var nMapIdx = 0; nMapIdx < nStrLen; nMapIdx++) {
+    nChr = sDOMStr.charCodeAt(nMapIdx);
+    nArrLen += nChr < 0x80 ? 1 : nChr < 0x800 ? 2 : nChr < 0x10000 ? 3 : nChr < 0x200000 ? 4 : nChr < 0x4000000 ? 5 : 6;
+  }
+
+  aBytes = new Uint8Array(nArrLen);
+
+  /* transcription... */
+
+  for (var nIdx = 0, nChrIdx = 0; nIdx < nArrLen; nChrIdx++) {
+    nChr = sDOMStr.charCodeAt(nChrIdx);
+    if (nChr < 128) {
+      /* one byte */
+      aBytes[nIdx++] = nChr;
+    } else if (nChr < 0x800) {
+      /* two bytes */
+      aBytes[nIdx++] = 192 + (nChr >>> 6);
+      aBytes[nIdx++] = 128 + (nChr & 63);
+    } else if (nChr < 0x10000) {
+      /* three bytes */
+      aBytes[nIdx++] = 224 + (nChr >>> 12);
+      aBytes[nIdx++] = 128 + (nChr >>> 6 & 63);
+      aBytes[nIdx++] = 128 + (nChr & 63);
+    } else if (nChr < 0x200000) {
+      /* four bytes */
+      aBytes[nIdx++] = 240 + (nChr >>> 18);
+      aBytes[nIdx++] = 128 + (nChr >>> 12 & 63);
+      aBytes[nIdx++] = 128 + (nChr >>> 6 & 63);
+      aBytes[nIdx++] = 128 + (nChr & 63);
+    } else if (nChr < 0x4000000) {
+      /* five bytes */
+      aBytes[nIdx++] = 248 + (nChr >>> 24);
+      aBytes[nIdx++] = 128 + (nChr >>> 18 & 63);
+      aBytes[nIdx++] = 128 + (nChr >>> 12 & 63);
+      aBytes[nIdx++] = 128 + (nChr >>> 6 & 63);
+      aBytes[nIdx++] = 128 + (nChr & 63);
+    } else /* if (nChr <= 0x7fffffff) */ {
+      /* six bytes */
+      aBytes[nIdx++] = 252 + /* (nChr >>> 32) is not possible in ECMAScript! So...: */ (nChr / 1073741824);
+      aBytes[nIdx++] = 128 + (nChr >>> 24 & 63);
+      aBytes[nIdx++] = 128 + (nChr >>> 18 & 63);
+      aBytes[nIdx++] = 128 + (nChr >>> 12 & 63);
+      aBytes[nIdx++] = 128 + (nChr >>> 6 & 63);
+      aBytes[nIdx++] = 128 + (nChr & 63);
+    }
+  }
+
+  return aBytes;
+
+}
+
+
+
+function hexToR(h) {return parseInt((cutHex(h)).substring(0,2),16)}
+function hexToG(h) {return parseInt((cutHex(h)).substring(2,4),16)}
+function hexToB(h) {return parseInt((cutHex(h)).substring(4,6),16)}
+function cutHex(h) {return (h.charAt(0)=="#") ? h.substring(1,7):h}
+function setDocHexColor(doc, hex) {
+  var r = hexToR(hex);
+  var g = hexToG(hex);
+  var b = hexToB(hex);
+  return doc.setTextColor(r, g, b);
+}
+function setDocHexFill(doc, hex) {
+  var r = hexToR(hex);
+  var g = hexToG(hex);
+  var b = hexToB(hex);
+  return doc.setFillColor(r, g, b);
+}
+function setDocHexDraw(doc, hex) {
+  var r = hexToR(hex);
+  var g = hexToG(hex);
+  var b = hexToB(hex);
+  return doc.setDrawColor(r, g, b);
+}
+
+function openUrl(url, track) {
+  trackUrl(track ? track : url);
+  window.open(url, '_blank');
+}
+
+function toggleDatePicker(field) {
+  $('#'+field).datepicker('show');
+}
+
+function roundToTwo(num, toString) {
+  var val = +(Math.round(num + "e+2")  + "e-2");
+  return toString ? val.toFixed(2) : val;
+}
+
+function truncate(str, length) {  
+  return (str && str.length > length) ? (str.substr(0, length-1) + '...') : str;
 }

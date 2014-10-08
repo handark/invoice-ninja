@@ -1,12 +1,16 @@
 {{ $clientName }},
 
-To view your invoice for {{ $invoiceAmount }}, click the link below:
-
+{{ trans("texts.{$entityType}_message", ['amount' => $invoiceAmount]) }}
 {{ $link }}
 
 @if ($emailFooter)
 {{ $emailFooter }}
 @else
-Best regards,
+{{ trans('texts.email_signature') }}
 {{ $accountName }}
+@endif
+
+@if ($showNinjaFooter)
+{{ trans('texts.ninja_email_footer', ['site' => 'Invoice Ninja']) }}
+{{ NINJA_URL }}
 @endif

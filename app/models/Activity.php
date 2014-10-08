@@ -22,6 +22,13 @@ define("ACTIVITY_TYPE_UPDATE_CREDIT", 15);
 define("ACTIVITY_TYPE_ARCHIVE_CREDIT", 16);
 define("ACTIVITY_TYPE_DELETE_CREDIT", 17);
 
+define("ACTIVITY_TYPE_CREATE_QUOTE", 18);
+define("ACTIVITY_TYPE_UPDATE_QUOTE", 19);
+define("ACTIVITY_TYPE_EMAIL_QUOTE", 20);
+define("ACTIVITY_TYPE_VIEW_QUOTE", 21);
+define("ACTIVITY_TYPE_ARCHIVE_QUOTE", 22);
+define("ACTIVITY_TYPE_DELETE_QUOTE", 23);
+
 
 class Activity extends Eloquent
 {
@@ -44,7 +51,7 @@ class Activity extends Eloquent
 
 		if ($entity) 
 		{
-			$activity->user_id = $entity->user_id;
+			$activity->user_id = $entity instanceof User ? $entity->id : $entity->user_id;
 			$activity->account_id = $entity->account_id;
 		} 
 		else if (Auth::check())
@@ -60,13 +67,18 @@ class Activity extends Eloquent
 		return $activity;
 	}
 
-	public static function createClient($client)
+	public static function createClient($client, $notify = true)
 	{		
 		$activity = Activity::getBlank();
 		$activity->client_id = $client->id;
 		$activity->activity_type_id = ACTIVITY_TYPE_CREATE_CLIENT;
 		$activity->message = Utils::encodeActivity(Auth::user(), 'created', $client);
 		$activity->save();		
+
+		if ($notify)
+		{
+			Activity::checkSubscriptions(EVENT_CREATE_CLIENT, $client);
+		}
 	}
 
 	public static function updateClient($client)
@@ -105,44 +117,37 @@ class Activity extends Eloquent
 			$message = Utils::encodeActivity(null, 'created', $invoice);
 		}
 
+		$adjustment = 0;
 		$client = $invoice->client;
-		$adjustment = $invoice->amount;
-		$client->balance = $client->balance + $adjustment;
-		$client->save();
+		if (!$invoice->is_quote && !$invoice->is_recurring)
+		{
+			$adjustment = $invoice->amount;
+			$client->balance = $client->balance + $adjustment;
+			$client->save();
+		}
 
 		$activity = Activity::getBlank($invoice);
 		$activity->invoice_id = $invoice->id;
 		$activity->client_id = $invoice->client_id;
-		$activity->activity_type_id = ACTIVITY_TYPE_CREATE_INVOICE;
+		$activity->activity_type_id = $invoice->is_quote ? ACTIVITY_TYPE_CREATE_QUOTE : ACTIVITY_TYPE_CREATE_INVOICE;
 		$activity->message = $message;
 		$activity->balance = $client->balance;
 		$activity->adjustment = $adjustment;
 		$activity->save();
+
+		Activity::checkSubscriptions($invoice->is_quote ? EVENT_CREATE_QUOTE : EVENT_CREATE_INVOICE, $invoice);
 	}	
 
 	public static function archiveInvoice($invoice)
 	{
-		if ($invoice->invoice_status_id < INVOICE_STATUS_SENT)
-		{
-			return;
-		}
-
 		if (!$invoice->is_deleted)
 		{
-			if ($invoice->balance > 0)
-			{
-				$client = $invoice->client;
-				$client->balance = $client->balance - $invoice->balance;
-				$client->save();
-			}			
-
 			$activity = Activity::getBlank();
 			$activity->invoice_id = $invoice->id;
 			$activity->client_id = $invoice->client_id;
-			$activity->activity_type_id = ACTIVITY_TYPE_ARCHIVE_INVOICE;
+			$activity->activity_type_id = $invoice->is_quote ? ACTIVITY_TYPE_ARCHIVE_QUOTE : ACTIVITY_TYPE_ARCHIVE_INVOICE;
 			$activity->message = Utils::encodeActivity(Auth::user(), 'archived', $invoice);
 			$activity->balance = $invoice->client->balance;
-			$activity->adjustment = $invoice->balance;
 
 			$activity->save();
 		}
@@ -157,7 +162,7 @@ class Activity extends Eloquent
 		$activity->client_id = $invitation->invoice->client_id;
 		$activity->invoice_id = $invitation->invoice_id;
 		$activity->contact_id = $invitation->contact_id;
-		$activity->activity_type_id = ACTIVITY_TYPE_EMAIL_INVOICE;
+		$activity->activity_type_id = $invitation->invoice ? ACTIVITY_TYPE_EMAIL_QUOTE : ACTIVITY_TYPE_EMAIL_INVOICE;
 		$activity->message = Utils::encodeActivity(Auth::check() ? Auth::user() : null, 'emailed', $invitation->invoice, $invitation->contact);
 		$activity->balance = $client->balance;
 		$activity->save();
@@ -165,22 +170,24 @@ class Activity extends Eloquent
 
 	public static function updateInvoice($invoice)
 	{
+		$client = $invoice->client;
+
 		if ($invoice->is_deleted && !$invoice->getOriginal('is_deleted'))
 		{
-			if ($invoice->balance > 0)
+			if (!$invoice->is_quote && !$invoice->is_recurring)
 			{
-				$client = $invoice->client;
 				$client->balance = $client->balance - $invoice->balance;
+				$client->paid_to_date = $client->paid_to_date - ($invoice->amount - $invoice->balance);
 				$client->save();
 			}
 
 			$activity = Activity::getBlank();
 			$activity->client_id = $invoice->client_id;
 			$activity->invoice_id = $invoice->id;
-			$activity->activity_type_id = ACTIVITY_TYPE_DELETE_INVOICE;
+			$activity->activity_type_id = $invoice->is_quote ? ACTIVITY_TYPE_DELETE_QUOTE : ACTIVITY_TYPE_DELETE_INVOICE;
 			$activity->message = Utils::encodeActivity(Auth::user(), 'deleted', $invoice);
 			$activity->balance = $invoice->client->balance;
-			$activity->adjustment = $invoice->balance * -1;
+			$activity->adjustment = $invoice->is_quote ? 0 : $invoice->balance * -1;
 			$activity->save();		
 		}
 		else
@@ -192,19 +199,21 @@ class Activity extends Eloquent
 				return;
 			}
 
-			$backupInvoice = Invoice::with('invoice_items', 'client.account', 'client.contacts')->find($invoice->id);			
+			$backupInvoice = Invoice::with('invoice_items', 'client.account', 'client.contacts')->find($invoice->id);
 
-			$client = $invoice->client;
-			$client->balance = $client->balance + $diff;
-			$client->save();
+			if (!$invoice->is_quote && !$invoice->is_recurring)
+			{
+				$client->balance = $client->balance + $diff;
+				$client->save();
+			}
 
 			$activity = Activity::getBlank($invoice);
 			$activity->client_id = $invoice->client_id;
 			$activity->invoice_id = $invoice->id;
-			$activity->activity_type_id = ACTIVITY_TYPE_UPDATE_INVOICE;
+			$activity->activity_type_id = $invoice->is_quote ? ACTIVITY_TYPE_UPDATE_QUOTE : ACTIVITY_TYPE_UPDATE_INVOICE;
 			$activity->message = Utils::encodeActivity(Auth::user(), 'updated', $invoice);
 			$activity->balance = $client->balance;
-			$activity->adjustment = $diff;
+			$activity->adjustment = $invoice->is_quote || $invoice->is_recurring ? 0 : $diff;
 			$activity->json_backup = $backupInvoice->hidePrivateFields()->toJSON();
 			$activity->save();
 		}
@@ -240,7 +249,7 @@ class Activity extends Eloquent
 		$activity->invitation_id = $invitation->id;
 		$activity->contact_id = $invitation->contact_id;
 		$activity->invoice_id = $invitation->invoice_id;
-		$activity->activity_type_id = ACTIVITY_TYPE_VIEW_INVOICE;
+		$activity->activity_type_id = $invitation->invoice->is_quote ? ACTIVITY_TYPE_VIEW_QUOTE : ACTIVITY_TYPE_VIEW_INVOICE;
 		$activity->message = Utils::encodeActivity($invitation->contact, 'viewed', $invitation->invoice);
 		$activity->balance = $invitation->invoice->client->balance;
 		$activity->save();
@@ -259,13 +268,13 @@ class Activity extends Eloquent
 		{
 			$activity = Activity::getBlank($client);
 			$activity->contact_id = $payment->contact_id;
-			$activity->message = Utils::encodeActivity($payment->invitation->contact, 'entered payment');			
+			$activity->message = Utils::encodeActivity($payment->invitation->contact, 'entered ' . $payment->getName() . ' for ', $payment->invoice);
 		}
 		else
 		{
-			$activity = Activity::getBlank();
-			$message = $payment->payment_type_id == PAYMENT_TYPE_CREDIT ? 'applied credit' : 'entered payment';
-			$activity->message = Utils::encodeActivity(Auth::user(), $message);
+			$activity = Activity::getBlank($client);
+			$message = $payment->payment_type_id == PAYMENT_TYPE_CREDIT ? 'applied credit for ' : 'entered ' . $payment->getName() . ' for ';
+			$activity->message = Utils::encodeActivity(Auth::user(), $message, $payment->invoice);
 		}
 
 		$activity->payment_id = $payment->id;
@@ -276,6 +285,7 @@ class Activity extends Eloquent
 
 			$invoice = $payment->invoice;
 			$invoice->balance = $invoice->balance - $payment->amount;
+			$invoice->invoice_status_id = ($invoice->balance > 0) ? INVOICE_STATUS_PARTIAL : INVOICE_STATUS_PAID;
 			$invoice->save();
 		}
 
@@ -285,6 +295,8 @@ class Activity extends Eloquent
 		$activity->balance = $client->balance;
 		$activity->adjustment = $payment->amount * -1;
 		$activity->save();
+
+		Activity::checkSubscriptions(EVENT_CREATE_PAYMENT, $payment);
 	}	
 
 	public static function updatePayment($payment)
@@ -305,7 +317,7 @@ class Activity extends Eloquent
 			$activity->client_id = $invoice->client_id;
 			$activity->invoice_id = $invoice->id;
 			$activity->activity_type_id = ACTIVITY_TYPE_DELETE_PAYMENT;
-			$activity->message = Utils::encodeActivity(Auth::user(), 'deleted payment');
+			$activity->message = Utils::encodeActivity(Auth::user(), 'deleted ' . $payment->getName());
 			$activity->balance = $client->balance;
 			$activity->adjustment = $payment->amount;
 			$activity->save();		
@@ -345,22 +357,16 @@ class Activity extends Eloquent
 		}
 
 		$client = $payment->client;
-		$client->balance = $client->balance + $payment->amount;
-		$client->paid_to_date = $client->paid_to_date - $payment->amount;
-		$client->save();
-
 		$invoice = $payment->invoice;
-		$invoice->balance = $invoice->balance + $payment->amount;
-		$invoice->save();
 
 		$activity = Activity::getBlank();
 		$activity->payment_id = $payment->id;
 		$activity->invoice_id = $invoice->id;
 		$activity->client_id = $client->id;
 		$activity->activity_type_id = ACTIVITY_TYPE_ARCHIVE_PAYMENT;
-		$activity->message = Utils::encodeActivity(Auth::user(), 'archived payment');
+		$activity->message = Utils::encodeActivity(Auth::user(), 'archived ' . $payment->getName());
 		$activity->balance = $client->balance;
-		$activity->adjustment = $payment->amount;
+		$activity->adjustment = 0;
 		$activity->save();
 	}	
 
@@ -423,11 +429,25 @@ class Activity extends Eloquent
 		}
 	
 		$activity = Activity::getBlank();
-		$activity->client_id = $client->id;
+		$activity->client_id = $credit->client_id;
 		$activity->credit_id = $credit->id;
 		$activity->activity_type_id = ACTIVITY_TYPE_ARCHIVE_CREDIT;
 		$activity->message = Utils::encodeActivity(Auth::user(), 'archived ' . Utils::formatMoney($credit->balance, $credit->client->currency_id) . ' credit');
 		$activity->balance = $credit->client->balance;
 		$activity->save();
+	}
+
+	private static function checkSubscriptions($event, $data)
+	{
+		if (!Auth::check()) {
+			return;
+		}
+		
+		$subscription = Auth::user()->account->getSubscription($event);
+		
+		if ($subscription)
+		{
+			Utils::notifyZapier($subscription, $data);
+		}
 	}
 }

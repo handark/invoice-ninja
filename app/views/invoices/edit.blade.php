@@ -9,14 +9,14 @@
 
 @section('content')
 	
-	@if ($invoice)
+	@if ($invoice && $invoice->id)
 		<ol class="breadcrumb">
-			<li>{{ link_to('invoices', 'Invoices') }}</li>
+			<li>{{ link_to(($entityType == ENTITY_QUOTE ? 'quotes' : 'invoices'), trans('texts.' . ($entityType == ENTITY_QUOTE ? 'quotes' : 'invoices'))) }}</li>
 			<li class='active'>{{ $invoice->invoice_number }}</li>
 		</ol>  
 	@endif
 
-	{{ Former::open($url)->method($method)->addClass('main_form')->rules(array(
+	{{ Former::open($url)->method($method)->addClass('warn-on-exit')->rules(array(
 		'client' => 'required',
 		'email' => 'required',
 		'product_key' => 'max:20',
@@ -28,7 +28,7 @@
     <div class="row" style="min-height:195px" onkeypress="formEnterClick(event)">
     	<div class="col-md-4" id="col_1">
 
-    		@if ($invoice)
+    		@if ($invoice && $invoice->id)
 				<div class="form-group">
 					<label for="client" class="control-label col-lg-4 col-sm-4">Client</label>
 					<div class="col-lg-8 col-sm-8" style="padding-top: 7px">
@@ -46,7 +46,7 @@
 				</div>
 			</div>
 
-			@if ($invoice)
+			@if ($invoice && $invoice->id)
 				</div>
 			@endif
 
@@ -64,33 +64,35 @@
 		</div>
 		<div class="col-md-4" id="col_2">
 			<div data-bind="visible: !is_recurring()">
-				{{ Former::text('invoice_date')->data_bind("datePicker: invoice_date, valueUpdate: 'afterkeydown'")
+				{{ Former::text('invoice_date')->data_bind("datePicker: invoice_date, valueUpdate: 'afterkeydown'")->label(trans("texts.{$entityType}_date"))
 							->data_date_format(Session::get(SESSION_DATE_PICKER_FORMAT))->append('<i class="glyphicon glyphicon-calendar" onclick="toggleDatePicker(\'invoice_date\')"></i>') }}
 				{{ Former::text('due_date')->data_bind("datePicker: due_date, valueUpdate: 'afterkeydown'")
 							->data_date_format(Session::get(SESSION_DATE_PICKER_FORMAT))->append('<i class="glyphicon glyphicon-calendar" onclick="toggleDatePicker(\'due_date\')"></i>') }}							
 			</div>
-			<div data-bind="visible: is_recurring" style="display: none">
-				{{ Former::select('frequency_id')->options($frequencies)->data_bind("value: frequency_id") }}
-				{{ Former::text('start_date')->data_bind("datePicker: start_date, valueUpdate: 'afterkeydown'")
-							->data_date_format(Session::get(SESSION_DATE_PICKER_FORMAT))->append('<i class="glyphicon glyphicon-calendar" onclick="toggleDatePicker(\'start_date\')"></i>') }}
-				{{ Former::text('end_date')->data_bind("datePicker: end_date, valueUpdate: 'afterkeydown'")
-							->data_date_format(Session::get(SESSION_DATE_PICKER_FORMAT))->append('<i class="glyphicon glyphicon-calendar" onclick="toggleDatePicker(\'end_date\')"></i>') }}
-			</div>
-			@if ($invoice && $invoice->recurring_invoice_id)
-				<div class="pull-right" style="padding-top: 6px">
-					Created by a {{ link_to('/invoices/'.$invoice->recurring_invoice_id, 'recurring invoice') }}
+			@if ($entityType == ENTITY_INVOICE)
+				<div data-bind="visible: is_recurring" style="display: none">
+					{{ Former::select('frequency_id')->options($frequencies)->data_bind("value: frequency_id") }}
+					{{ Former::text('start_date')->data_bind("datePicker: start_date, valueUpdate: 'afterkeydown'")
+								->data_date_format(Session::get(SESSION_DATE_PICKER_FORMAT))->append('<i class="glyphicon glyphicon-calendar" onclick="toggleDatePicker(\'start_date\')"></i>') }}
+					{{ Former::text('end_date')->data_bind("datePicker: end_date, valueUpdate: 'afterkeydown'")
+								->data_date_format(Session::get(SESSION_DATE_PICKER_FORMAT))->append('<i class="glyphicon glyphicon-calendar" onclick="toggleDatePicker(\'end_date\')"></i>') }}
 				</div>
-			@else 
-			<div data-bind="visible: invoice_status_id() < CONSTS.INVOICE_STATUS_SENT">
-				{{ Former::checkbox('recurring')->text(trans('texts.enable').' &nbsp;&nbsp; <a href="#" onclick="showLearnMore()"><i class="glyphicon glyphicon-question-sign"></i> '.trans('texts.learn_more').'</a>')->data_bind("checked: is_recurring")
-					->inlineHelp($invoice && $invoice->last_sent_date ? 'Last invoice sent ' . Utils::dateToString($invoice->last_sent_date) : '') }}
-			</div>			
+				@if ($invoice && $invoice->recurring_invoice_id)
+					<div class="pull-right" style="padding-top: 6px">
+						Created by a {{ link_to('/invoices/'.$invoice->recurring_invoice_id, 'recurring invoice') }}
+					</div>
+				@else 
+				<div data-bind="visible: invoice_status_id() < CONSTS.INVOICE_STATUS_SENT">
+					{{ Former::checkbox('recurring')->text(trans('texts.enable').' &nbsp;&nbsp; <a href="#" onclick="showLearnMore()"><i class="glyphicon glyphicon-question-sign"></i> '.trans('texts.learn_more').'</a>')->data_bind("checked: is_recurring")
+						->inlineHelp($invoice && $invoice->last_sent_date ? 'Last invoice sent ' . Utils::dateToString($invoice->last_sent_date) : '') }}
+				</div>			
+				@endif
 			@endif
 			
 		</div>
 
 		<div class="col-md-4" id="col_2">
-			{{ Former::text('invoice_number')->label(trans('texts.invoice_number_short'))->data_bind("value: invoice_number, valueUpdate: 'afterkeydown'") }}
+			{{ Former::text('invoice_number')->label(trans("texts.{$entityType}_number_short"))->data_bind("value: invoice_number, valueUpdate: 'afterkeydown'") }}
 			{{ Former::text('po_number')->label(trans('texts.po_number_short'))->data_bind("value: po_number, valueUpdate: 'afterkeydown'") }}				
 			{{ Former::text('discount')->data_bind("value: discount, valueUpdate: 'afterkeydown'")->append('%') }}			
 			{{-- Former::select('currency_id')->addOption('', '')->fromQuery($currencies, 'name', 'id')->data_bind("value: currency_id") --}}
@@ -109,100 +111,154 @@
 
 	{{ Former::hidden('data')->data_bind("value: ko.mapping.toJSON(model)") }}	
 
+	<div class="table-responsive">
 	<table class="table invoice-table" style="margin-bottom: 0px !important">
-	    <thead>
-	        <tr>
-	        	<th style="min-width:32px;" class="hide-border"></th>
-	        	<th style="min-width:160px">{{ trans('texts.item') }}</th>
-	        	<th style="width:100%">{{ trans('texts.description') }}</th>
-	        	<th style="min-width:120px">{{ trans('texts.unit_cost') }}</th>
-	        	<th style="min-width:120px">{{ trans('texts.quantity') }}</th>
-	        	<th style="min-width:120px;display:none;" data-bind="visible: $root.invoice_item_taxes.show">{{ trans('texts.tax') }}</th>
-	        	<th style="min-width:120px;">{{ trans('texts.line_total') }}</th>
-	        	<th style="min-width:32px;" class="hide-border"></th>
-	        </tr>
-	    </thead>
-	    <tbody data-bind="sortable: { data: invoice_items, afterMove: onDragged }">
-	    	<tr data-bind="event: { mouseover: showActions, mouseout: hideActions }" class="sortable-row">
-	        	<td class="hide-border td-icon">
-	        		<i style="display:none" data-bind="visible: actionsVisible() &amp;&amp; $parent.invoice_items().length > 1" class="fa fa-sort"></i>
-	        	</td>
-	            <td>	            	
-	            	{{ Former::text('product_key')->useDatalist(Product::getProductKeys($products), 'product_key')->onkeyup('onItemChange()')
-	            		->raw()->data_bind("value: product_key, valueUpdate: 'afterkeydown'")->addClass('datalist') }}
-	            </td>
-	            <td>
-	            	<textarea data-bind="value: wrapped_notes, valueUpdate: 'afterkeydown'" rows="1" cols="60" style="resize: none;" class="form-control word-wrap"></textarea>
-	            </td>
-	            <td>
-	            	<input onkeyup="onItemChange()" data-bind="value: prettyCost, valueUpdate: 'afterkeydown'" style="text-align: right" class="form-control"//>
-	            </td>
-	            <td>
-	            	<input onkeyup="onItemChange()" data-bind="value: prettyQty, valueUpdate: 'afterkeydown'" style="text-align: right" class="form-control"//>
-	            </td>
-	            <td style="display:none;" data-bind="visible: $root.invoice_item_taxes.show">
-	            	<select class="form-control" style="width:100%" data-bind="value: tax, options: $root.tax_rates, optionsText: 'displayName'"></select>
-	            </td>
-		        	<td style="text-align:right;padding-top:9px !important">
-	            	<div class="line-total" data-bind="text: totals.total"></div>
-	            </td>
-	        	<td style="cursor:pointer" class="hide-border td-icon">
-	        		&nbsp;<i style="display:none" data-bind="click: $parent.removeItem, visible: actionsVisible() &amp;&amp; $parent.invoice_items().length > 1" class="fa fa-minus-circle redlink" title="Remove item"/>
-	        	</td>
-	        </tr>
+		<thead>
+			<tr>
+				<th style="min-width:32px;" class="hide-border"></th>
+				<th style="min-width:160px">{{ trans('texts.item') }}</th>
+				<th style="width:100%">{{ trans('texts.description') }}</th>
+				<th style="min-width:120px">{{ trans('texts.unit_cost') }}</th>
+				<th style="{{ $account->hide_quantity ? 'display:none' : 'min-width:120px' }}">{{ trans('texts.quantity') }}</th>
+				<th style="min-width:120px;display:none;" data-bind="visible: $root.invoice_item_taxes.show">{{ trans('texts.tax') }}</th>
+				<th style="min-width:120px;">{{ trans('texts.line_total') }}</th>
+				<th style="min-width:32px;" class="hide-border"></th>
+			</tr>
+		</thead>
+		<tbody data-bind="sortable: { data: invoice_items, afterMove: onDragged }">
+			<tr data-bind="event: { mouseover: showActions, mouseout: hideActions }" class="sortable-row">
+				<td class="hide-border td-icon">
+					<i style="display:none" data-bind="visible: actionsVisible() &amp;&amp; $parent.invoice_items().length > 1" class="fa fa-sort"></i>
+				</td>
+				<td>	            	
+					{{ Former::text('product_key')->useDatalist($products, 'product_key')->onkeyup('onItemChange()')
+					->raw()->data_bind("value: product_key, valueUpdate: 'afterkeydown'")->addClass('datalist') }}
+				</td>
+				<td>
+					<textarea data-bind="value: wrapped_notes, valueUpdate: 'afterkeydown'" rows="1" cols="60" style="resize: none;" class="form-control word-wrap"></textarea>
+				</td>
+				<td>
+					<input onkeyup="onItemChange()" data-bind="value: prettyCost, valueUpdate: 'afterkeydown'" style="text-align: right" class="form-control"//>
+				</td>
+				<td style="{{ $account->hide_quantity ? 'display:none' : '' }}">
+					<input onkeyup="onItemChange()" data-bind="value: prettyQty, valueUpdate: 'afterkeydown'" style="text-align: right" class="form-control"//>
+				</td>
+				<td style="display:none;" data-bind="visible: $root.invoice_item_taxes.show">
+					<select class="form-control" style="width:100%" data-bind="value: tax, options: $root.tax_rates, optionsText: 'displayName'"></select>
+				</td>
+				<td style="text-align:right;padding-top:9px !important">
+					<div class="line-total" data-bind="text: totals.total"></div>
+				</td>
+				<td style="cursor:pointer" class="hide-border td-icon">
+					&nbsp;<i style="display:none" data-bind="click: $parent.removeItem, visible: actionsVisible() &amp;&amp; $parent.invoice_items().length > 1" class="fa fa-minus-circle redlink" title="Remove item"/>
+				</td>
+			</tr>
 		</tbody>
+
+
 		<tfoot>
 			<tr>
-	        	<td class="hide-border"/>
-	        	<td colspan="2" rowspan="5">
-	        		<br/>
+				<td class="hide-border"/>
+				<td colspan="2" rowspan="6" style="vertical-align:top">
+					<br/>
 					{{ Former::textarea('public_notes')->data_bind("value: wrapped_notes, valueUpdate: 'afterkeydown'")
-						->label(false)->placeholder(trans('texts.note_to_client'))->style('width: 520px; resize: none') }}			
+					->label(false)->placeholder(trans('texts.note_to_client'))->style('resize: none') }}			
 					{{ Former::textarea('terms')->data_bind("value: wrapped_terms, valueUpdate: 'afterkeydown'")
-						->label(false)->placeholder(trans('texts.invoice_terms'))->style('width: 520px; resize: none')
-						->addGroupClass('less-space-bottom') }}
+					->label(false)->placeholder(trans('texts.invoice_terms'))->style('resize: none')
+					->addGroupClass('less-space-bottom') }}
 					<label class="checkbox" style="width: 200px">
 						<input type="checkbox" style="width: 24px" data-bind="checked: set_default_terms"/>{{ trans('texts.save_as_default_terms') }}
 					</label>
-	        	</td>
-	        	<td style="display:none" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
-				<td colspan="2">{{ trans('texts.subtotal') }}</td>
+				</td>
+				<td style="display:none" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
+				<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ trans('texts.subtotal') }}</td>
 				<td style="text-align: right"><span data-bind="text: totals.subtotal"/></td>
-	        </tr>
-	        <tr style="display:none" data-bind="visible: discount() > 0">
-	        	<td class="hide-border" colspan="3"/>
-	        	<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>
-				<td colspan="2">{{ trans('texts.discount') }}</td>
+			</tr>
+
+			<tr style="display:none" data-bind="visible: discount() > 0">
+				<td class="hide-border" colspan="3"/>
+				<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>
+				<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ trans('texts.discount') }}</td>
 				<td style="text-align: right"><span data-bind="text: totals.discounted"/></td>
-	        </tr>
-	        <tr style="display:none" data-bind="visible: $root.invoice_taxes.show">
-	        	<td class="hide-border" colspan="3"/>
-	        	<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
-				<td>{{ trans('texts.tax') }}</td>
+			</tr>
+
+			@if (($account->custom_invoice_label1 || ($invoice && floatval($invoice->custom_value1)) != 0) && $account->custom_invoice_taxes1)
+				<tr>
+					<td class="hide-border" colspan="3"/>
+					<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>
+					<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ $account->custom_invoice_label1 }}</td>
+					<td style="text-align: right;padding-right: 28px" colspan="2"><input class="form-control" data-bind="value: custom_value1, valueUpdate: 'afterkeydown'"/></td>
+				</tr>
+			@endif
+
+			@if (($account->custom_invoice_label2 || ($invoice && floatval($invoice->custom_value2)) != 0) && $account->custom_invoice_taxes2)
+				<tr>
+					<td class="hide-border" colspan="3"/>
+					<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>
+					<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ $account->custom_invoice_label2 }}</td>
+					<td style="text-align: right;padding-right: 28px" colspan="2"><input class="form-control" data-bind="value: custom_value2, valueUpdate: 'afterkeydown'"/></td>
+				</tr>
+			@endif
+
+			<tr style="display:none" data-bind="visible: $root.invoice_taxes.show">
+				<td class="hide-border" colspan="3"/>
+				<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
+				@if (!$account->hide_quantity)
+					<td>{{ trans('texts.tax') }}</td>
+				@endif
 				<td style="min-width:120px"><select class="form-control" style="width:100%" data-bind="value: tax, options: $root.tax_rates, optionsText: 'displayName'"></select></td>
 				<td style="text-align: right"><span data-bind="text: totals.taxAmount"/></td>
-	        </tr>
-	        <tr>
-	        	<td class="hide-border" colspan="3"/>
-	        	<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
-				<td colspan="2">{{ trans('texts.paid_to_date') }}</td>
-				<td style="text-align: right" data-bind="text: totals.paidToDate"></td>
-	        </tr>	        
-	        <tr>
-	        	<td class="hide-border" colspan="3"/>
-	        	<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
-				<td colspan="2"><b>{{ trans('texts.balance_due') }}</b></td>
+			</tr>
+
+			@if (($account->custom_invoice_label1 || ($invoice && floatval($invoice->custom_value1)) != 0) && !$account->custom_invoice_taxes1)
+				<tr>
+					<td class="hide-border" colspan="3"/>
+					<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>
+					<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ $account->custom_invoice_label1 }}</td>
+					<td style="text-align: right;padding-right: 28px" colspan="2"><input class="form-control" data-bind="value: custom_value1, valueUpdate: 'afterkeydown'"/></td>
+				</tr>
+			@endif
+
+			@if (($account->custom_invoice_label2 || ($invoice && floatval($invoice->custom_value2)) != 0) && !$account->custom_invoice_taxes2)
+				<tr>
+					<td class="hide-border" colspan="3"/>
+					<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>
+					<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ $account->custom_invoice_label2 }}</td>
+					<td style="text-align: right;padding-right: 28px" colspan="2"><input class="form-control" data-bind="value: custom_value2, valueUpdate: 'afterkeydown'"/></td>
+				</tr>
+			@endif
+
+			@if (!$account->hide_paid_to_date)
+				<tr>
+					<td class="hide-border" colspan="3"/>
+					<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
+					<td colspan="{{ $account->hide_quantity ? 1 : 2 }}">{{ trans('texts.paid_to_date') }}</td>
+					<td style="text-align: right" data-bind="text: totals.paidToDate"></td>
+				</tr>	        
+			@endif
+
+			<tr>
+				<td class="hide-border" colspan="3"/>
+				<td style="display:none" class="hide-border" data-bind="visible: $root.invoice_item_taxes.show"/>	        	
+				<td colspan="{{ $account->hide_quantity ? 1 : 2 }}"><b>{{ trans($entityType == ENTITY_INVOICE ? 'texts.balance_due' : 'texts.total') }}</b></td>
 				<td style="text-align: right"><span data-bind="text: totals.total"/></td>
-	        </tr>
-	    </tfoot>
+			</tr>
+
+		</tfoot>
+
+
 	</table>
+	</div>
 
 	<p>&nbsp;</p>
 	<div class="form-actions">
 
 		<div style="display:none">
+			{{ Former::populateField('entityType', $entityType) }}
+			{{ Former::text('entityType') }}
 			{{ Former::text('action') }}
-			@if ($invoice)
+				
+			@if ($invoice && $invoice->id)
 				{{ Former::populateField('id', $invoice->public_id) }}
 				{{ Former::text('id') }}		
 			@endif
@@ -217,51 +273,44 @@
 		{{ Button::primary(trans('texts.download_pdf'), array('onclick' => 'onDownloadClick()'))->append_with_icon('download-alt'); }}	
         
 		@if (!$invoice || (!$invoice->trashed() && !$invoice->client->trashed()))						
-			@if ($invoice)		
+			@if ($invoice && $invoice->id)		
 
 				<div id="primaryActions" style="text-align:left" class="btn-group">
-					<button class="btn-success btn" type="button">{{ trans('texts.save_invoice') }}</button>
+					<button class="btn-success btn" type="button">{{ trans("texts.save_{$entityType}") }}</button>
 					<button class="btn-success btn dropdown-toggle" type="button" data-toggle="dropdown"> 
 						<span class="caret"></span>
 					</button>
 					<ul class="dropdown-menu">
-						<li><a href="javascript:onSaveClick()" id="saveButton">{{ trans('texts.save_invoice') }}</a></li>
-						<li><a href="javascript:onCloneClick()">{{ trans('texts.clone_invoice') }}</a></li>
+						<li><a href="javascript:onSaveClick()" id="saveButton">{{ trans("texts.save_{$entityType}") }}</a></li>
+						<li><a href="javascript:onCloneClick()">{{ trans("texts.clone_{$entityType}") }}</a></li>
+
+						@if ($invoice && $entityType == ENTITY_QUOTE)			
+							<li class="divider"></li>
+							@if ($invoice->quote_invoice_id)
+								<li><a href="{{ URL::to("invoices/{$invoice->quote_invoice_id}/edit") }}">{{ trans("texts.view_invoice") }}</a></li>
+							@else
+								<li><a href="javascript:onConvertClick()">{{ trans("texts.convert_to_invoice") }}</a></li>
+							@endif
+						@elseif ($invoice && $entityType == ENTITY_INVOICE)
+							@if ($invoice->quote_id)
+								<li class="divider"></li>
+								<li><a href="{{ URL::to("quotes/{$invoice->quote_id}/edit") }}">{{ trans("texts.view_quote") }}</a></li>
+							@endif
+						@endif
+
 						<li class="divider"></li>
-						<li><a href="javascript:onArchiveClick()">{{ trans('texts.archive_invoice') }}</a></li>
-						<li><a href="javascript:onDeleteClick()">{{ trans('texts.delete_invoice') }}</a></li>
+						<li><a href="javascript:onArchiveClick()">{{ trans("texts.archive_{$entityType}") }}</a></li>
+						<li><a href="javascript:onDeleteClick()">{{ trans("texts.delete_{$entityType}") }}</a></li>
 					</ul>
 				</div>		
 
-				{{-- DropdownButton::normal('Download PDF',
-					  Navigation::links(
-					    array(
-					    	array('Download PDF', "javascript:onDownloadClick()"),
-					     	array(Navigation::DIVIDER),
-					     	array('Create Payment', "javascript:onPaymentClick()"),
-					     	array('Create Credit', "javascript:onCreditClick()"),
-					    )
-					  )
-					, array('id'=>'relatedActions', 'style'=>'text-align:left'))->split(); --}}				
-
-				{{-- DropdownButton::primary('Save Invoice',
-					  Navigation::links(
-					    array(
-					    	array('Save Invoice', "javascript:onSaveClick()"),
-					     	array('Clone Invoice', "javascript:onCloneClick()"),
-					     	array(Navigation::DIVIDER),
-					     	array('Archive Invoice', "javascript:onArchiveClick()"),
-					     	array('Delete Invoice', "javascript:onDeleteClick()"),
-					    )
-					  )
-					, array('id'=>'primaryActions', 'style'=>'text-align:left', 'data-bind'=>'css: $root.enable.save'))->split(); --}}				
 			@else
-				{{ Button::success(trans('texts.save_invoice'), array('id' => 'saveButton', 'onclick' => 'onSaveClick()')) }}			
+				{{ Button::success(trans("texts.save_{$entityType}"), array('id' => 'saveButton', 'onclick' => 'onSaveClick()')) }}			
 			@endif
 
-			{{ Button::normal(trans('texts.email_invoice'), array('id' => 'email_button', 'onclick' => 'onEmailClick()'))->append_with_icon('send'); }}		
+			{{ Button::normal(trans("texts.email_{$entityType}"), array('id' => 'email_button', 'onclick' => 'onEmailClick()'))->append_with_icon('send'); }}		
 
-			@if ($invoice)		
+			@if ($invoice && $invoice->id && $entityType == ENTITY_INVOICE)		
 				{{ Button::primary(trans('texts.enter_payment'), array('onclick' => 'onPaymentClick()'))->append_with_icon('usd'); }}		
 			@endif
 		@endif
@@ -274,9 +323,14 @@
 	<iframe id="theFrame" style="display:none" frameborder="1" width="100%" height="1180"></iframe>
 	<canvas id="theCanvas" style="display:none;width:100%;border:solid 1px #CCCCCC;"></canvas>
 
+	@if (!Auth::user()->account->isPro())
+		<div style="font-size:larger">
+			{{ trans('texts.pro_plan.remove_logo', ['link'=>'<a href="#" onclick="showProPlan(\'remove_logo\')">'.trans('texts.pro_plan.remove_logo_link').'</a>']) }}
+		</div>
+	@endif
 
 	<div class="modal fade" id="clientModal" tabindex="-1" role="dialog" aria-labelledby="clientModalLabel" aria-hidden="true">
-	  <div class="modal-dialog" style="min-width:1000px">
+	  <div class="modal-dialog large-dialog">
 	    <div class="modal-content">
 	      <div class="modal-header">
 	        <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
@@ -291,7 +345,17 @@
 				{{ Former::text('name')->data_bind("value: name, valueUpdate: 'afterkeydown', attr { placeholder: name.placeholder }") }}
 				{{ Former::text('website')->data_bind("value: website, valueUpdate: 'afterkeydown'") }}
 				{{ Former::text('work_phone')->data_bind("value: work_phone, valueUpdate: 'afterkeydown'") }}
-				
+
+				@if (Auth::user()->isPro())				
+					@if ($account->custom_client_label1)
+						{{ Former::text('custom_value1')->label($account->custom_client_label1)
+							->data_bind("value: custom_value1, valueUpdate: 'afterkeydown'") }}
+					@endif
+					@if ($account->custom_client_label2)
+						{{ Former::text('custom_value2')->label($account->custom_client_label2)
+							->data_bind("value: custom_value2, valueUpdate: 'afterkeydown'") }}
+					@endif
+				@endif				
 				
 				{{ Former::legend('address') }}
 				{{ Former::text('address1')->data_bind("value: address1, valueUpdate: 'afterkeydown'") }}
@@ -355,7 +419,7 @@
 	</div>
 
 	<div class="modal fade" id="taxModal" tabindex="-1" role="dialog" aria-labelledby="taxModalLabel" aria-hidden="true">
-	  <div class="modal-dialog" style="min-width:150px">
+	  <div class="modal-dialog">
 	    <div class="modal-content">
 	      <div class="modal-header">
 	        <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
@@ -388,7 +452,7 @@
 				</tbody>
 			</table>
 			&nbsp;
-
+			
 			{{ Former::checkbox('invoice_taxes')->text(trans('texts.enable_invoice_tax'))
 				->label(trans('texts.settings'))->data_bind('checked: $root.invoice_taxes, enable: $root.tax_rates().length > 1') }}
 			{{ Former::checkbox('invoice_item_taxes')->text(trans('texts.enable_line_item_tax'))
@@ -420,30 +484,25 @@
 		</div>
 
 	     <div class="modal-footer" style="margin-top: 0px">
-	      	<button type="button" class="btn btn-primary" data-dismiss="modal">Close</button>
+	      	<button type="button" class="btn btn-primary" data-dismiss="modal">{{ trans('texts.close') }}</button>
 	     </div>
 	  		
 	    </div>
 	  </div>
 	</div>
 
-
-
 	{{ Former::close() }}
+
+
 	</div>
 
 	<script type="text/javascript">
 	
-	function showSignUp() {
-		$('#signUpModal').modal('show');		
-	}
-
 	function showLearnMore() {
 		$('#recurringModal').modal('show');			
 	}
 
 	$(function() {
-
 		$('#country_id').combobox().on('change', function(e) {
 			var countryId = parseInt($('input[name=country_id]').val(), 10);	
 			var foundMatch = false;
@@ -471,6 +530,12 @@
 			$('input[name=client]').val({{ $client->public_id }});
 		@endif
 
+		/*
+		if (clients.length == 0) {
+			$('.client_select input.form-control').prop('disabled', true);
+		}
+		*/
+		
 		var $input = $('select#client');
 		$input.combobox().on('change', function(e) {
 			var clientId = parseInt($('input[name=client]').val(), 10);		
@@ -481,13 +546,22 @@
 				model.invoice().client().country = false;				
 			}
 			refreshPDF();
-		}); //.trigger('change');				
-
-		$('#terms, #public_notes, #invoice_number, #invoice_date, #due_date, #po_number, #discount, #currency_id, #invoice_design_id').change(function() {
-			refreshPDF();
 		});
 
-		@if ($client || $invoice)
+		// If no clients exists show the client form when clicking on the client select input
+		if (clients.length === 0) {
+			$('.client_select input.form-control').on('click', function() {
+				model.showClientForm();
+			});
+		}		
+
+		$('#terms, #public_notes, #invoice_number, #invoice_date, #due_date, #po_number, #discount, #currency_id, #invoice_design_id, #recurring').change(function() {
+			setTimeout(function() {
+				refreshPDF();
+			}, 1);
+		});
+
+		@if ($client || $invoice || count($clients) == 0)
 			$('#invoice_number').focus();
 		@else
 			$('.client_select input.form-control').focus();			
@@ -536,62 +610,54 @@
 	});	
 
 	function applyComboboxListeners() {
-		$('.invoice-table input, .invoice-table select, .invoice-table textarea').on('blur', function() {
-			//if (value != $(this).val()) refreshPDF();
+		var selectorStr = '.invoice-table input, .invoice-table select, .invoice-table textarea';		
+		$(selectorStr).off('blur').on('blur', function() {
 			refreshPDF();
 		});
 
-		var value;		
-		$('.datalist').on('focus', function() {
-			value = $(this).val();
-		}).on('blur', function() {
-			if (value != $(this).val()) refreshPDF();
-		}).on('input', function() {			
-			var key = $(this).val();
-			for (var i=0; i<products.length; i++) {
-				var product = products[i];
-				if (product.product_key == key) {
-					var model = ko.dataFor(this);
-					//model.notes(product.notes);
-					//model.cost(product.cost);
-					//model.qty(product.qty);
-					break;
+		@if (Auth::user()->account->fill_products)
+			$('.datalist').on('input', function() {			
+				var key = $(this).val();
+				for (var i=0; i<products.length; i++) {
+					var product = products[i];
+					if (product.product_key == key) {
+						var model = ko.dataFor(this);					
+						model.notes(product.notes);
+						model.cost(accounting.toFixed(product.cost,2));
+						//model.qty(product.qty);
+						break;
+					}
 				}
-			}
-		});
+			});
+		@endif
 	}
 
 	function createInvoiceModel() {
 		var invoice = ko.toJS(model).invoice;		
-		
+		invoice.is_pro = {{ Auth::user()->isPro() ? 'true' : 'false' }};
+		invoice.is_quote = {{ $entityType == ENTITY_QUOTE ? 'true' : 'false' }};
+
 		@if (file_exists($account->getLogoPath()))
 			invoice.image = "{{ HTML::image_data($account->getLogoPath()) }}";
 			invoice.imageWidth = {{ $account->getLogoWidth() }};
 			invoice.imageHeight = {{ $account->getLogoHeight() }};
 		@endif
 
+		window.logoImages = {};
+    logoImages.imageLogo1 = "{{ HTML::image_data('images/report_logo1.jpg') }}";
+		logoImages.imageLogoWidth1 =120;
+    logoImages.imageLogoHeight1 = 40
 
-    //define logo images
+    logoImages.imageLogo2 = "{{ HTML::image_data('images/report_logo2.jpg') }}";
+    logoImages.imageLogoWidth2 =325/2;
+    logoImages.imageLogoHeight2 = 81/2;
 
-
-    invoice.imageLogo1 = "{{ HTML::image_data('images/report_logo1.jpg') }}";
-    invoice.imageLogoWidth1 =120;
-    invoice.imageLogoHeight1 = 40
-
-    invoice.imageLogo2 = "{{ HTML::image_data('images/report_logo2.jpg') }}";
-    invoice.imageLogoWidth2 =325/2;
-    invoice.imageLogoHeight2 = 81/2;
-
-    invoice.imageLogo3 = "{{ HTML::image_data('images/report_logo3.jpg') }}";
-    invoice.imageLogoWidth3 =325/2;
-    invoice.imageLogoHeight3 = 81/2;
+    logoImages.imageLogo3 = "{{ HTML::image_data('images/report_logo3.jpg') }}";
+    logoImages.imageLogoWidth3 =325/2;
+    logoImages.imageLogoHeight3 = 81/2;
 
 
     return invoice;
-	}
-
-	function toggleDatePicker(field) {
-		$('#'+field).datepicker('show');
 	}
 
 	/*
@@ -605,74 +671,86 @@
 	var isRefreshing = false;
 	var needsRefresh = false;
 
-	function getPDFString() {
+	function getPDFString() {		
 		var invoice = createInvoiceModel();
-		var doc = generatePDF(invoice, invoiceLabels);
+		var doc = generatePDF(invoice);
 		if (!doc) return;
 		return doc.output('datauristring');
 	}
+
 	function refreshPDF() {
 		if ({{ Auth::user()->force_pdfjs ? 'false' : 'true' }} && (isFirefox || (isChrome && !isChromium))) {
 			var string = getPDFString();
+			if (!string) return;
 			$('#theFrame').attr('src', string).show();		
 		} else {			
 			if (isRefreshing) {
 				needsRefresh = true;
 				return;
 			}
-			isRefreshing = true;
 			var string = getPDFString();
+			if (!string) return;
+			isRefreshing = true;
 			var pdfAsArray = convertDataURIToBinary(string);	
-		    PDFJS.getDocument(pdfAsArray).then(function getPdfHelloWorld(pdf) {
+	    PDFJS.getDocument(pdfAsArray).then(function getPdfHelloWorld(pdf) {
 
-		      pdf.getPage(1).then(function getPageHelloWorld(page) {
-		        var scale = 1.5;
-		        var viewport = page.getViewport(scale);
+	      pdf.getPage(1).then(function getPageHelloWorld(page) {
+	        var scale = 1.5;
+	        var viewport = page.getViewport(scale);
 
-		        var canvas = document.getElementById('theCanvas');
-		        var context = canvas.getContext('2d');
-		        canvas.height = viewport.height;
-		        canvas.width = viewport.width;
+	        var canvas = document.getElementById('theCanvas');
+	        var context = canvas.getContext('2d');
+	        canvas.height = viewport.height;
+	        canvas.width = viewport.width;
 
-		        page.render({canvasContext: context, viewport: viewport});
-		      	$('#theCanvas').show();
-		      	isRefreshing = false;
-		      	if (needsRefresh) {
-		      		needsRefresh = false;
-		      		refreshPDF();
-		      	}
-		      });
-		    });	
+	        page.render({canvasContext: context, viewport: viewport});
+	      	$('#theCanvas').show();
+	      	isRefreshing = false;
+	      	if (needsRefresh) {
+	      		needsRefresh = false;
+	      		refreshPDF();
+	      	}
+	      });
+	    });	
 		}
 	}
 
 	function onDownloadClick() {
+		trackUrl('/download_pdf');
 		var invoice = createInvoiceModel();
-		var doc = generatePDF(invoice);
+		var doc = generatePDF(invoice, true);
 		doc.save('Invoice-' + $('#invoice_number').val() + '.pdf');
 	}
 
 	function onEmailClick() {
-		@if (Auth::user()->confirmed)
-		if (confirm('Are you sure you want to email this invoice?')) {
-			$('#action').val('email');
-			$('#submitButton').click();
+		if (confirm('{{ trans("texts.confirm_email_$entityType") }}')) {		
+			submitAction('email');
 		}
-		@else
-			$('#action').val('email');
-			$('#submitButton').click();
-		@endif
 	}
 
 	function onSaveClick() {
-		$('#action').val('');
-		$('#submitButton').click();
+		if (model.invoice().is_recurring()) {
+			if (confirm('{{ trans("texts.confirm_recurring_email_$entityType") }}')) {		
+				submitAction('');
+			}			
+		} else {
+			submitAction('');
+		}
+	}
+
+	function submitAction(value) {
+		if (!isSaveValid()) {
+			model.showClientForm();
+			return;
+		}
+		$('#action').val(value);
+		$('#submitButton').click();		
 	}
 
 	function isSaveValid() {
 		var isValid = false;
-		for (var i=0; i<self.invoice().client().contacts().length; i++) {
-			var contact = self.invoice().client().contacts()[i];
+		for (var i=0; i<model.invoice().client().contacts().length; i++) {
+			var contact = model.invoice().client().contacts()[i];
 			if (isValidEmailAddress(contact.email())) {
 				isValid = true;
 			} else {
@@ -703,8 +781,11 @@
 	}
 
 	function onCloneClick() {
-		$('#action').val('clone');
-		$('#submitButton').click();
+		submitAction('clone');
+	}
+
+	function onConvertClick() {
+		submitAction('convert');		
 	}
 
 	@if ($client && $invoice)
@@ -718,14 +799,12 @@
 	@endif
 
 	function onArchiveClick() {
-		$('#action').val('archive');
-		$('#submitButton').click();		
+		submitAction('archive');			
 	}
 
 	function onDeleteClick() {
-		if (confirm('Are you sure you want to delete this invoice?')) {
-			$('#action').val('delete');
-			$('#submitButton').click();			
+		if (confirm('Are you sure you want to delete this {{ $entityType }}?')) {
+			submitAction('delete');		
 		}		
 	}
 
@@ -736,8 +815,7 @@
 			}
 			event.preventDefault();		     				
 
-			$('#action').val('');
-			$('#submitButton').click();
+			submitAction('');		
 			return false;
 		}
 	}
@@ -776,6 +854,8 @@
 				var dueDate = $('#invoice_date').datepicker('getDate');
 				dueDate.setDate(dueDate.getDate() + paymentTerms);
 				self.invoice().due_date(dueDate);	
+				// We're using the datepicker to handle the date formatting 
+				self.invoice().due_date($('#due_date').val());
 			}			
 		}
 
@@ -887,6 +967,7 @@
 		}
 
 		self.showClientForm = function() {
+			trackUrl('/view_client_form');
 			self.clientBackup = ko.mapping.toJS(self.invoice().client);
 
 			$('#emailError').css( "display", "none" );			
@@ -894,6 +975,7 @@
 		}
 
 		self.clientFormComplete = function() {
+			trackUrl('/save_client_form');
 
 			var isValid = true;
 			$("input[name='email']").each(function(item, value) {
@@ -937,9 +1019,7 @@
 
 			refreshPDF();
 			model.clientBackup = false;
-			$('#clientModal').modal('hide');			
-
-			$('#invoice_number').focus();
+			$('#clientModal').modal('hide');						
 		}		
 
 		self.clientLinkText = ko.computed(function() {
@@ -949,7 +1029,7 @@
 			}
 			else
 			{
-				if (clients.length > {{ MAX_NUM_CLIENTS}})
+				if (clients.length > {{ Auth::user()->getMaxNumClients() }})
 				{
 					return '';
 				}
@@ -987,6 +1067,11 @@
 		self.balance = ko.observable(0);
 		self.invoice_design_id = ko.observable({{ $account->invoice_design_id }});
 
+		self.custom_value1 = ko.observable(0);
+		self.custom_value2 = ko.observable(0);
+		self.custom_taxes1 = ko.observable(false);
+		self.custom_taxes2 = ko.observable(false);
+
 		self.mapping = {
 			'client': {
 		        create: function(options) {
@@ -1007,6 +1092,9 @@
 
 		self.addItem = function() {
 			var itemModel = new ItemModel();
+			@if ($account->hide_quantity)
+				itemModel.qty(1);
+			@endif
 			self.invoice_items.push(itemModel);	
 			applyComboboxListeners();			
 		}
@@ -1076,7 +1164,7 @@
 		    var total = 0;
 		    for(var p=0; p < self.invoice_items().length; ++p) {
 		    	var item = self.invoice_items()[p];
-		        total += item.totals.rawTotal();
+	        total += item.totals.rawTotal();
 		    }
 		    return total;
 		});
@@ -1087,7 +1175,7 @@
 		});
 
 		this.totals.rawDiscounted = ko.computed(function() {
-			return self.totals.rawSubtotal() * (self.discount()/100);			
+			return roundToTwo(self.totals.rawSubtotal() * (self.discount()/100));			
 		});
 
 		this.totals.discounted = ko.computed(function() {
@@ -1095,16 +1183,28 @@
 		});
 
 		self.totals.taxAmount = ko.computed(function() {
-		    var total = self.totals.rawSubtotal();
+	    var total = self.totals.rawSubtotal();
 
-		    var discount = parseFloat(self.discount());
-		    if (discount > 0) {
-		    	total = total * ((100 - discount)/100);
-		    }
+	    var discount = parseFloat(self.discount());
+	    if (discount > 0) {
+	    	total = roundToTwo(total * ((100 - discount)/100));
+	    }
+
+	    var customValue1 = roundToTwo(self.custom_value1());
+	    var customValue2 = roundToTwo(self.custom_value2());
+	    var customTaxes1 = self.custom_taxes1() == 1;
+	    var customTaxes2 = self.custom_taxes2() == 1;
+	    
+	    if (customValue1 && customTaxes1) {
+	    	total = NINJA.parseFloat(total) + customValue1;
+	    }
+	    if (customValue2 && customTaxes2) {
+	    	total = NINJA.parseFloat(total) + customValue2;
+	    }
 
 			var taxRate = parseFloat(self.tax_rate());
 			if (taxRate > 0) {
-				var tax = total * (taxRate/100);			
+				var tax = roundToTwo(total * (taxRate/100));			
         		return formatMoney(tax, self.client().currency_id());
         	} else {
         		return formatMoney(0);
@@ -1112,7 +1212,7 @@
     	});
 
 		this.totals.rawPaidToDate = ko.computed(function() {
-			return self.amount() - self.balance();		    
+			return accounting.toFixed(self.amount(),2) - accounting.toFixed(self.balance(),2);
 		});
 
 		this.totals.paidToDate = ko.computed(function() {
@@ -1121,29 +1221,48 @@
 		});
 
 		this.totals.total = ko.computed(function() {
-		    var total = self.totals.rawSubtotal();
+	    var total = accounting.toFixed(self.totals.rawSubtotal(),2);	    
 
-		    var discount = parseFloat(self.discount());
-		    if (discount > 0) {
-		    	total = total * ((100 - discount)/100);
-		    }
+	    var discount = parseFloat(self.discount());
+	    if (discount > 0) {
+	    	total = roundToTwo(total * ((100 - discount)/100));
+	    }
+
+	    var customValue1 = roundToTwo(self.custom_value1());
+	    var customValue2 = roundToTwo(self.custom_value2());
+	    var customTaxes1 = self.custom_taxes1() == 1;
+	    var customTaxes2 = self.custom_taxes2() == 1;
+	    
+	    if (customValue1 && customTaxes1) {
+	    	total = NINJA.parseFloat(total) + customValue1;
+	    }
+	    if (customValue2 && customTaxes2) {
+	    	total = NINJA.parseFloat(total) + customValue2;
+	    }
 
 			var taxRate = parseFloat(self.tax_rate());
 			if (taxRate > 0) {
-        		total = NINJA.parseFloat(total) + (total * (taxRate/100));
-        	}        	
+    		total = NINJA.parseFloat(total) + roundToTwo((total * (taxRate/100)));
+    	}        	
 
-        	var paid = self.totals.rawPaidToDate();
-        	if (paid > 0) {
-        		total -= paid;
-        	}
+	    if (customValue1 && !customTaxes1) {
+	    	total = NINJA.parseFloat(total) + customValue1;
+	    }
+	    if (customValue2 && !customTaxes2) {
+	    	total = NINJA.parseFloat(total) + customValue2;
+	    }
+	    
+    	var paid = self.totals.rawPaidToDate();
+    	if (paid > 0) {
+    		total -= paid;
+    	}
 
-		    return total != 0 ? formatMoney(total, self.client().currency_id()) : '';
-    	});
+	    return total != 0 ? formatMoney(total, self.client().currency_id()) : '';
+  	});
 
-    	self.onDragged = function(item) {
-    		refreshPDF();
-    	}	
+  	self.onDragged = function(item) {
+  		refreshPDF();
+  	}	
 	}
 
 	function ClientModel(data) {
@@ -1151,6 +1270,8 @@
 		self.public_id = ko.observable(0);
 		self.name = ko.observable('');
 		self.work_phone = ko.observable('');
+		self.custom_value1 = ko.observable('');
+		self.custom_value2 = ko.observable('');
 		self.private_notes = ko.observable('');
 		self.address1 = ko.observable('');
 		self.address2 = ko.observable('');
@@ -1179,9 +1300,7 @@
 
 		self.addContact = function() {
 			var contact = new ContactModel();
-			if (self.contacts().length == 0) {
-				contact.send_invoice(true);
-			}
+			contact.send_invoice(true);
 			self.contacts.push(contact);
 			return false;
 		}
@@ -1228,16 +1347,24 @@
 		self.email = ko.observable('');
 		self.phone = ko.observable('');		
 		self.send_invoice = ko.observable(false);
+		self.invitation_link = ko.observable('');		
 
 		self.email.display = ko.computed(function() {
 			var str = '';
 			if (self.first_name() || self.last_name()) {
 				str += self.first_name() + ' ' + self.last_name() + '<br/>';
 			}			
-			return str + self.email();
+			str += self.email();
+
+			@if (Utils::isConfirmed())
+			if (self.invitation_link()) {
+				str += '<br/><a href="' + self.invitation_link() + '" target="_blank">{{ trans('texts.view_as_recipient') }}</a>';
+			}
+			@endif
+			
+			return str;
 		});		
 		
-
 		if (data) {
 			ko.mapping.fromJS(data, {}, this);		
 		}		
@@ -1365,12 +1492,12 @@
 			var cost = NINJA.parseFloat(self.cost());
 			var qty = NINJA.parseFloat(self.qty());
 			var taxRate = NINJA.parseFloat(self.tax_rate());
-        	var value = cost * qty;        	
-        	if (taxRate > 0) {
-        		value += value * (taxRate/100);
-        	}        	
-        	return value ? value : '';
-    	});		
+    	var value = cost * qty;        	
+    	if (taxRate > 0) {
+    		value += value * (taxRate/100);
+    	}    	
+    	return value ? roundToTwo(value) : '';
+  	});		
 
 		this.totals.total = ko.computed(function() {
 			var total = self.totals.rawTotal();
@@ -1379,22 +1506,22 @@
 			} else {
 				return total ? formatMoney(total, 1) : '';
 			}
-    	});
+  	});
 
-    	this.hideActions = function() {
-			this.actionsVisible(false);
-    	}
+  	this.hideActions = function() {
+		this.actionsVisible(false);
+  	}
 
-    	this.showActions = function() {
-			this.actionsVisible(true);
-    	}
+  	this.showActions = function() {
+		this.actionsVisible(true);
+  	}
 
-    	this.isEmpty = function() {
-    		return !self.product_key() && !self.notes() && !self.cost() && !self.qty();
-    	}
+  	this.isEmpty = function() {
+  		return !self.product_key() && !self.notes() && !self.cost() && (!self.qty() || {{ $account->hide_quantity ? 'true' : 'false' }});
+  	}
 
-    	this.onSelect = function(){              
-        }
+  	this.onSelect = function(){              
+    }
 	}
 
 	function onItemChange()
@@ -1455,7 +1582,7 @@
 		model.addTaxRate();
 		@foreach ($taxRates as $taxRate)
 			model.addTaxRate({{ $taxRate }});
-		@endforeach	
+		@endforeach
 		@if ($invoice)
 			var invoice = {{ $invoice }};
 			ko.mapping.fromJS(invoice, model.invoice().mapping, model.invoice);			
@@ -1464,24 +1591,37 @@
 			}
 			var invitationContactIds = {{ json_encode($invitationContactIds) }};		
 			var client = clientMap[invoice.client.public_id];
-			for (var i=0; i<client.contacts.length; i++) {
-				var contact = client.contacts[i];
-				contact.send_invoice = invitationContactIds.indexOf(contact.public_id) >= 0;
-			}			
+			if (client) { // in case it's deleted
+				for (var i=0; i<client.contacts.length; i++) {
+					var contact = client.contacts[i];
+					contact.send_invoice = invitationContactIds.indexOf(contact.public_id) >= 0;
+				}			
+			}
 			model.invoice().addItem();
 			//model.addTaxRate();			
+		@else 
+			model.invoice().custom_taxes1({{ $account->custom_invoice_taxes1 ? 'true' : 'false' }});
+			model.invoice().custom_taxes2({{ $account->custom_invoice_taxes2 ? 'true' : 'false' }});
 		@endif
+                // Add the first tax rate for new invoices
+                //if(model.invoice_taxes() && model.tax_rates().length > 0) {
+                //    var tax = model.tax_rates()[0];
+                //    model.invoice().tax(tax);
+                //}
 	@endif
 
 	model.invoice().tax(model.getTaxRate(model.invoice().tax_name(), model.invoice().tax_rate()));			
 	for (var i=0; i<model.invoice().invoice_items().length; i++) {
 		var item = model.invoice().invoice_items()[i];
 		item.tax(model.getTaxRate(item.tax_name(), item.tax_rate()));
-		item.cost(NINJA.parseFloat(item.cost()) > 0 ? formatMoney(item.cost(), model.invoice().client().currency_id(), true) : '');
+		item.cost(NINJA.parseFloat(item.cost()) > 0 ? roundToTwo(item.cost(), true) : '');
 	}
 	onTaxRateChange();
 
+	// display blank instead of '0'
 	if (!model.invoice().discount()) model.invoice().discount('');
+	if (!model.invoice().custom_value1()) model.invoice().custom_value1('');
+	if (!model.invoice().custom_value2()) model.invoice().custom_value2('');
 
 	ko.applyBindings(model);	
 	onItemChange();

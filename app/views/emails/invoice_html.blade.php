@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en-US">
+<html>
     <head>
         <meta charset="utf-8">
     </head>
@@ -7,16 +7,20 @@
 
       {{ $clientName }},<p/>
 
-      To view your invoice for {{ $invoiceAmount }}, click the link below:<p/>
-
-      {{ $link }}<p/>
+      {{ trans("texts.{$entityType}_message", ['amount' => $invoiceAmount]) }}<p/>      
+      <a href="{{ $link }}">{{ $link }}</a><p/>
 
       @if ($emailFooter)
       {{ nl2br($emailFooter) }}
       @else
-      Best regards,<br/>
+      {{ trans('texts.email_signature') }}<br/>
       {{ $accountName }}
       @endif
+
+      @if ($showNinjaFooter)
+      <p/>
+      {{ trans('texts.ninja_email_footer', ['site' => '<a href="' . NINJA_URL . '/?utm_source=invoice_email_footer">Invoice Ninja</a>']) }}
+      @endif    
 
     </body>
 </html>

@@ -4,7 +4,7 @@
 @section('content')
 
 <script>
-  $(document).ready(function () {
+  $(function() {
 
     $("#feedbackSubmit").click(function() {
       //clear any errors
@@ -27,10 +27,9 @@
       //if there are any errors return without sending e-mail
       if (hasErrors) {
         return false;
-      }
-      
-    }); 
-    
+      }    
+    });
+         
   });
   
 //namespace as not to pollute global namespace
@@ -52,38 +51,27 @@ var contactForm = {
     $("#feedbackSubmit").after('<div id="emailAlert" class="alert alert-' + (isError ? 'danger' : 'success') + '" style="margin-top: 5px;">' + $('<div/>').text(msg).html() + '</div>');
   }
 };
-
 </script>
 
-<section class="hero4" data-speed="2" data-type="background">
-  <div class="container">
-    <div class="caption">
-     <h1>Contact us
-     </h1>
-   </div>
- </div>
-</section>
+<section class="hero background hero-contact center" data-speed="2" data-type="background">
+<div class="container">
+    <div class="row">
+          <h1><img src="{{ asset('images/icon-contact.png') }}">Contact <span class="thin">us</span></h1>
+        </div>
+      </div>
+    </section>
 
 <section class="about contact">
   <div class="container">
     <div id="contact_form" class="row">
-
-
-      @if (Session::has('message'))
-      <div class="alert alert-info">{{ Session::get('message') }}</div>
-      @endif
-
-      @if (Session::has('error'))
-      <div class="alert alert-danger">{{ Session::get('error') }}</div>
-      @endif
-
       
       <div class="row">              
         <div class="col-md-7">
-          <h2>Questions, special requests, or just want to say hi?</h2>
-          <p>Fill in the form below and we'll get back to you as soon as possible. Hope to hear from you!</p>
-          
-          {{ Form::open(['url' => 'contact', 'class' => 'feedbackForm']) }}
+            <div class="headline">
+                <h2>Questions, special requests, or just want to say hi?</h2>
+                <p>Fill in the form below and we'll get back to you as soon as possible. Hope to hear from you!</p>
+            </div>
+          {{ Form::open(['url' => 'contact_submit', 'class' => 'feedbackForm']) }}
           <div class="form-group">
             <input type="text" class="form-control" id="name" name="name" placeholder="Name">
             <span class="help-block" style="display: none;">Please enter your name.</span>
@@ -108,8 +96,8 @@ var contactForm = {
         <div class="col-md-4 col-md-offset-1 address">
           <h2>Other ways to reach us</h2>
           <p><span class="glyphicon glyphicon-send"></span><a href="mailto:contact@invoiceninja.com">contact@invoiceninja.com</a></p>
-          <p><span class="glyphicon glyphicon-earphone"></span>+1-800-763-1948</p>
-          <p><span class="github"></span><div style="padding-top:10px"> &nbsp;&nbsp;<a href="https://github.com/hillelcoren/invoice-ninja" target="_blank">GitHub Project</a></div></p>
+          <p><span class="glyphicon glyphicon-comment"></span><a href="http://www.invoiceninja.org" target="_blank">Google Group</a></p>        
+          <p><span class="socicon">Q</span><a href="https://github.com/hillelcoren/invoice-ninja" target="_blank">GitHub Project</a></div></p>
 
         </div>
       </div>

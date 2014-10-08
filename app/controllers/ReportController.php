@@ -2,6 +2,31 @@
 
 class ReportController extends \BaseController {
 
+	public function d3()
+	{
+		$message = '';
+
+		if (Auth::user()->account->isPro()) {
+			$account = Auth::user()->account;
+			$account = $account->with(['clients.invoices.invoice_items', 'clients.contacts'])->first();
+			$account = $account->hideFieldsForViz();
+			$clients = $account->clients->toJson();			
+		} else if (isset($_ENV['DATA_VIZ_SAMPLE'])) {
+			$clients = $_ENV['DATA_VIZ_SAMPLE'];
+			$message = trans('texts.sample_data');
+		} else {
+			$clients = '[]';
+		}
+
+		$data = [
+			'feature' => ACCOUNT_DATA_VISUALIZATIONS,
+			'clients' => $clients,
+			'message' => $message
+		];
+
+		return View::make('reports.d3', $data);
+	}
+
 	public function report()
 	{
 		if (Input::all())
@@ -19,58 +44,69 @@ class ReportController extends \BaseController {
 			$endDate = Utils::today(false);
 		}
 
-		$padding = $groupBy == 'DAYOFYEAR' ? 'day' : ($groupBy == 'WEEK' ? 'week' : 'month');
+		$padding = $groupBy == 'DAYOFYEAR' ? 'day' : ($groupBy == 'WEEK' ? 'week' : 'month');		
 		$endDate->modify('+1 '.$padding);
 		$datasets = [];
 		$labels = [];
 		$maxTotals = 0;
-
-		foreach ([ENTITY_INVOICE, ENTITY_PAYMENT, ENTITY_CREDIT] as $entityType)
+		$width = 10;
+		
+		if (Auth::user()->account->isPro())
 		{
-			$records = DB::table($entityType.'s')
-						->select(DB::raw('sum(amount) as total, '.$groupBy.'('.$entityType.'_date) as '.$groupBy))
-						->where($entityType.'s.deleted_at', '=', null)
-						->where($entityType.'s.'.$entityType.'_date', '>=', $startDate->format('Y-m-d'))
-						->where($entityType.'s.'.$entityType.'_date', '<=', $endDate->format('Y-m-d'))					
-						->groupBy($groupBy);
-						
-			$totals = $records->lists('total');
-			$dates = $records->lists($groupBy);		
-			$data = array_combine($dates, $totals);
-			
-			$interval = new DateInterval('P1'.substr($groupBy, 0, 1));
-			$period = new DatePeriod($startDate, $interval, $endDate);
-
-			$totals = [];			
-
-			foreach ($period as $d)
+			foreach ([ENTITY_INVOICE, ENTITY_PAYMENT, ENTITY_CREDIT] as $entityType)
 			{
-				$dateFormat = $groupBy == 'DAYOFYEAR' ? 'z' : ($groupBy == 'WEEK' ? 'W' : 'n');				
-				$date = $d->format($dateFormat);		
-				$totals[] = isset($data[$date]) ? $data[$date] : 0;
-
-				if ($entityType == ENTITY_INVOICE)  
+				$records = DB::table($entityType.'s')
+							->select(DB::raw('sum(amount) as total, '.$groupBy.'('.$entityType.'_date) as '.$groupBy))
+							->where('account_id', '=', Auth::user()->account_id)
+							->where($entityType.'s.deleted_at', '=', null)
+							->where($entityType.'s.'.$entityType.'_date', '>=', $startDate->format('Y-m-d'))
+							->where($entityType.'s.'.$entityType.'_date', '<=', $endDate->format('Y-m-d'))					
+							->groupBy($groupBy);
+							
+				if ($entityType == ENTITY_INVOICE)
 				{
-					$labelFormat = $groupBy == 'DAYOFYEAR' ? 'j' : ($groupBy == 'WEEK' ? 'W' : 'F');
-					$label = $d->format($labelFormat);
-					$labels[] = $label;
+					$records->where('is_quote', '=', false)
+									->where('is_recurring', '=', false);
+				}
+
+				$totals = $records->lists('total');
+				$dates = $records->lists($groupBy);		
+				$data = array_combine($dates, $totals);
+				
+				$interval = new DateInterval('P1'.substr($groupBy, 0, 1));
+				$period = new DatePeriod($startDate, $interval, $endDate);
+
+				$totals = [];			
+
+				foreach ($period as $d)
+				{
+					$dateFormat = $groupBy == 'DAYOFYEAR' ? 'z' : ($groupBy == 'WEEK' ? 'W' : 'n');				
+					$date = $d->format($dateFormat);		
+					$totals[] = isset($data[$date]) ? $data[$date] : 0;
+
+					if ($entityType == ENTITY_INVOICE)  
+					{
+						$labelFormat = $groupBy == 'DAYOFYEAR' ? 'j' : ($groupBy == 'WEEK' ? 'W' : 'F');
+						$label = $d->format($labelFormat);
+						$labels[] = $label;
+					}
+				}
+
+				$max = max($totals);
+
+				if ($max > 0)
+				{
+					$datasets[] = [
+						'totals' => $totals,
+						'colors' => $entityType == ENTITY_INVOICE ? '78,205,196' : ($entityType == ENTITY_CREDIT ? '199,244,100' : '255,107,107')
+					];
+					$maxTotals = max($max, $maxTotals);
 				}
 			}
 
-			$max = max($totals);
-
-			if ($max > 0)
-			{
-				$datasets[] = [
-					'totals' => $totals,
-					'colors' => $entityType == ENTITY_INVOICE ? '78,205,196' : ($entityType == ENTITY_CREDIT ? '199,244,100' : '255,107,107')
-				];
-				$maxTotals = max($max, $maxTotals);
-			}
+			$width = (ceil( $maxTotals / 100 ) * 100) / 10;  
+			$width = max($width, 10);
 		}
-
-		$width = (ceil( $maxTotals / 100 ) * 100) / 10;  
-		$width = max($width, 10);
 
 		$dateTypes = [
 			'DAYOFYEAR' => 'Daily',
@@ -92,7 +128,8 @@ class ReportController extends \BaseController {
 			'chartType' => $chartType,
 			'startDate' => $startDate->format(Session::get(SESSION_DATE_FORMAT)),
 			'endDate' => $endDate->modify('-1'.$padding)->format(Session::get(SESSION_DATE_FORMAT)),
-			'groupBy' => $groupBy
+			'groupBy' => $groupBy,
+			'feature' => ACCOUNT_CHART_BUILDER,
 		];
 		
 		return View::make('reports.report_builder', $params);

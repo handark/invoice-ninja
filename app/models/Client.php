@@ -155,6 +155,24 @@ class Client extends EntityModel
 		return $str;
 	}
 
+	public function getCustomFields()
+	{
+		$str = '';
+		$account = $this->account;
+
+		if ($account->custom_client_label1 && $this->custom_value1)
+		{
+			$str .= "{$account->custom_client_label1}: {$this->custom_value1}<br/>";
+		}
+
+		if ($account->custom_client_label2 && $this->custom_value2)
+		{
+			$str .= "{$account->custom_client_label2}: {$this->custom_value2}<br/>";
+		}
+
+		return $str;
+	}
+
 	public function getWebsite()
 	{
 		if (!$this->website)
@@ -186,6 +204,7 @@ class Client extends EntityModel
 			return $this->created_at->format('m/d/y h:i a');
 		}
 	}
+
 }
 
 /*

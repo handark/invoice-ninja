@@ -7,6 +7,11 @@ class Invoice extends EntityModel
 		return $this->belongsTo('Account');
 	}
 
+	public function user()
+	{
+		return $this->belongsTo('User');
+	}	
+
 	public function client()
 	{
 		return $this->belongsTo('Client')->withTrashed();
@@ -39,7 +44,7 @@ class Invoice extends EntityModel
 
 	public function getEntityType()
 	{
-		return ENTITY_INVOICE;
+		return $this->is_quote ? ENTITY_QUOTE : ENTITY_INVOICE;
 	}	
 	
 	public function isSent()
@@ -52,21 +57,93 @@ class Invoice extends EntityModel
 		return $this->invoice_status_id >= INVOICE_STATUS_VIEWED;	
 	}	
 
+	public function isPaid()
+	{
+		return $this->invoice_status_id >= INVOICE_STATUS_PAID;	
+	}	
+
 	public function hidePrivateFields()
 	{
-		$this->setVisible(['invoice_number', 'discount', 'po_number', 'invoice_date', 'due_date', 'terms', 'public_notes', 'amount', 'balance', 'invoice_items', 'client', 'tax_name', 'tax_rate', 'account', 'invoice_design_id']);
+		$this->setVisible([
+			'invoice_number', 
+			'discount', 
+			'po_number', 
+			'invoice_date', 
+			'due_date', 
+			'terms', 
+			'public_notes', 
+			'amount', 
+			'balance', 
+			'invoice_items', 
+			'client', 
+			'tax_name', 
+			'tax_rate', 
+			'account', 
+			'invoice_design_id',
+			'is_pro',
+			'is_quote',
+			'custom_value1',
+			'custom_value2',
+			'custom_taxes1',
+			'custom_taxes2']);
 		
-		$this->client->setVisible(['name', 'address1', 'address2', 'city', 'state', 'postal_code', 'work_phone', 'payment_terms', 'contacts', 'country', 'currency_id' ]);
-		$this->account->setVisible(['name', 'address1', 'address2', 'city', 'state', 'postal_code', 'work_phone', 'work_email', 'country', 'currency_id']);		
+		$this->client->setVisible([
+			'name', 
+			'address1', 
+			'address2', 
+			'city', 
+			'state', 
+			'postal_code', 
+			'work_phone', 
+			'payment_terms', 
+			'contacts', 
+			'country', 
+			'currency_id',
+			'custom_value1',
+			'custom_value2']);
+
+		$this->account->setVisible([
+			'name', 
+			'address1', 
+			'address2', 
+			'city', 
+			'state', 
+			'postal_code', 
+			'work_phone', 
+			'work_email', 
+			'country', 
+			'currency_id',
+			'custom_label1',
+			'custom_value1',
+			'custom_label2',
+			'custom_value2',
+			'custom_client_label1',
+			'custom_client_label2',
+			'primary_color',
+			'secondary_color',
+			'hide_quantity',
+			'hide_paid_to_date',
+			'custom_invoice_label1',
+			'custom_invoice_label2']);		
 
 		foreach ($this->invoice_items as $invoiceItem) 
 		{
-			$invoiceItem->setVisible(['product_key', 'notes', 'cost', 'qty', 'tax_name', 'tax_rate']);
+			$invoiceItem->setVisible([
+				'product_key', 
+				'notes', 
+				'cost', 
+				'qty', 
+				'tax_name', 
+				'tax_rate']);
 		}
 
 		foreach ($this->client->contacts as $contact) 
 		{
-			$contact->setVisible(['first_name', 'last_name', 'email', 'phone']);
+			$contact->setVisible([
+				'first_name', 
+				'last_name', 
+				'email', 
+				'phone']);
 		}						
 
 		return $this;
@@ -74,6 +151,16 @@ class Invoice extends EntityModel
 
 	public function shouldSendToday()
 	{
+		if (!$this->start_date || strtotime($this->start_date) > strtotime('now'))
+		{
+			return false;
+		}
+
+		if ($this->end_date && strtotime($this->end_date) < strtotime('now'))
+		{
+			return false;
+		}
+
 		$dayOfWeekToday = date('w');
 		$dayOfWeekStart = date('w', strtotime($this->start_date));
 
@@ -82,8 +169,7 @@ class Invoice extends EntityModel
 		
 		if (!$this->last_sent_date) 
 		{
-			$daysSinceLastSent = 0;
-			$monthsSinceLastSent = 0;
+			return true;
 		} 
 		else 
 		{	
@@ -102,22 +188,21 @@ class Invoice extends EntityModel
 		switch ($this->frequency_id)
 		{
 			case FREQUENCY_WEEKLY:
-				return $dayOfWeekStart == $dayOfWeekToday;
+				return $daysSinceLastSent >= 7;
 			case FREQUENCY_TWO_WEEKS:
-				return $dayOfWeekStart == $dayOfWeekToday && (!$daysSinceLastSent || $daysSinceLastSent == 14);
+				return $daysSinceLastSent >= 14;
 			case FREQUENCY_FOUR_WEEKS:
-				return $dayOfWeekStart == $dayOfWeekToday && (!$daysSinceLastSent || $daysSinceLastSent == 28);
+				return $daysSinceLastSent >= 28;
 			case FREQUENCY_MONTHLY:
-				return $dayOfMonthStart == $dayOfMonthToday || $daysSinceLastSent > 31;
+				return $monthsSinceLastSent >= 1;
 			case FREQUENCY_THREE_MONTHS:
-				return ($dayOfMonthStart == $dayOfMonthToday && (!$daysSinceLastSent || $monthsSinceLastSent == 3)) || $daysSinceLastSent > 92;
+				return $monthsSinceLastSent >= 3;
 			case FREQUENCY_SIX_MONTHS:
-				return ($dayOfMonthStart == $dayOfMonthToday && (!$daysSinceLastSent || $monthsSinceLastSent == 6)) || $daysSinceLastSent > 183;
+				return $monthsSinceLastSent >= 6;
 			case FREQUENCY_ANNUALLY:
-				return ($dayOfMonthStart == $dayOfMonthToday && (!$daysSinceLastSent || $monthsSinceLastSent == 12)) || $daysSinceLastSent > 365;
+				return $monthsSinceLastSent >= 12;
 			default:
-				Utils::fatalError("Invalid frequency supplied: " . $this->frequency_id);
-				break;
+				return false;
 		}
 
 		return false;

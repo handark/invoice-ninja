@@ -22,7 +22,7 @@ class CreditController extends \BaseController {
     {
         return View::make('list', array(
             'entityType'=>ENTITY_CREDIT, 
-            'title' => '- Credits',
+            'title' => trans('texts.credits'),
             'columns'=>Utils::trans(['checkbox', 'client', 'credit_amount', 'credit_balance', 'credit_date', 'private_notes', 'action'])
         ));
     }
@@ -67,7 +67,7 @@ class CreditController extends \BaseController {
             'credit' => null, 
             'method' => 'POST', 
             'url' => 'credits', 
-            'title' => '- New Credit',
+            'title' => trans('texts.new_credit'),
             //'currencies' => Currency::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get(),
             //'invoices' => Invoice::scope()->with('client', 'invoice_status')->orderBy('invoice_number')->get(),
             'clients' => Client::scope()->with('contacts')->orderBy('name')->get());
@@ -85,7 +85,7 @@ class CreditController extends \BaseController {
             'credit' => $credit, 
             'method' => 'PUT', 
             'url' => 'credits/' . $publicId, 
-            'title' => '- Edit Credit',
+            'title' => 'Edit Credit',
             //'currencies' => Currency::remember(DEFAULT_QUERY_CACHE)->orderBy('name')->get(),
             'clients' => Client::scope()->with('contacts')->orderBy('name')->get());
         return View::make('credit.edit', $data);
@@ -121,7 +121,7 @@ class CreditController extends \BaseController {
         {            
             $this->creditRepo->save($publicId, Input::all());
 
-            $message = $publicId ? 'Successfully updated credit' : 'Successfully created credit';
+            $message = trans('texts.created_credit');
             Session::flash('message', $message);
             return Redirect::to('clients/' . Input::get('client'));
         }
@@ -135,7 +135,7 @@ class CreditController extends \BaseController {
 
         if ($count > 0)
         {
-            $message = Utils::pluralize('Successfully '.$action.'d ? credit', $count);
+            $message = Utils::pluralize($action.'d_credit', $count);            
             Session::flash('message', $message);
         }
 
